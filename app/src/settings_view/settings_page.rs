@@ -49,7 +49,7 @@ use crate::settings::CloudPreferencesSettings;
 use crate::themes::theme::Fill;
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
-use crate::view_components::{Dropdown, SubmittableTextInput};
+use crate::view_components::{Dropdown, DropdownItemAction, SubmittableTextInput};
 
 pub const TOGGLE_BUTTON_RIGHT_PADDING: f32 = 5.;
 pub const HEADER_PADDING: f32 = 15.;
@@ -937,7 +937,7 @@ fn render_dropdown_item_label_internal(
     }
 }
 
-pub(crate) fn render_dropdown_item<T: Clone + Action>(
+pub(crate) fn render_dropdown_item<T: DropdownItemAction>(
     appearance: &Appearance,
     label: &str,
     secondary_text: Option<&str>,

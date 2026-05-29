@@ -6,7 +6,6 @@ use crate::{
         global_buffer_model::{BufferState, GlobalBufferModel},
         SaveOutcome, ShowFindReferencesCardProvider,
     },
-    debounce::debounce,
     localization,
     settings::AISettings,
     terminal::TerminalView,
@@ -41,6 +40,7 @@ use string_offset::CharOffset;
 use vec1::Vec1;
 use vim::vim::{MotionType, VimMode};
 use warp_core::features::FeatureFlag;
+use warp_core::r#async::debounce;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
 use warp_editor::content::buffer::InitialBufferState;

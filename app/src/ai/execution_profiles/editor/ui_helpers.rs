@@ -20,7 +20,9 @@ use super::{ExecutionProfileEditorView, ExecutionProfileEditorViewAction};
 use crate::editor::EditorView;
 use crate::settings::AISettings;
 use crate::ui_components::icons::Icon;
-use crate::view_components::{Dropdown, FilterableDropdown, SubmittableTextInput};
+use crate::view_components::{
+    Dropdown, DropdownItemAction, FilterableDropdown, SubmittableTextInput,
+};
 use crate::{Appearance, TemplatableMCPServerManager};
 
 const CONTEXT_WINDOW_SLIDER_WIDTH: f32 = 220.;
@@ -137,7 +139,7 @@ pub fn render_section_label(label: &str, appearance: &Appearance) -> Box<dyn Ele
     .finish()
 }
 
-fn render_filterable_dropdown_row<T: Clone + 'static + std::fmt::Debug + Send + Sync>(
+fn render_filterable_dropdown_row<T: DropdownItemAction>(
     appearance: &Appearance,
     label: impl Into<String>,
     desc: impl Into<String>,
@@ -215,7 +217,7 @@ struct PermissionRowContext<'a> {
     app: &'a AppContext,
 }
 
-fn render_permission_row<T: Clone + 'static + std::fmt::Debug + Send + Sync>(
+fn render_permission_row<T: DropdownItemAction>(
     context: PermissionRowContext<'_>,
     icon: Icon,
     label: impl Into<String>,

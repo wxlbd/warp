@@ -38,7 +38,7 @@ fn system_default_editor_label(app: &warpui::AppContext) -> String {
     text(app, "settings.features.external_editor.option.default_app")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExternalEditorAction {
     SetEditor(EditorChoice),
     SetCodePanelsEditor(EditorChoice),

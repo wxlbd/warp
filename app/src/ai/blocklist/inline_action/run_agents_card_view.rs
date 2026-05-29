@@ -196,7 +196,7 @@ struct RunAgentsCardHandles {
     pickers: OrchestrationPickerHandles<RunAgentsCardViewAction>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunAgentsCardViewAction {
     Accept,
     AcceptWithoutOrchestration,
@@ -451,14 +451,18 @@ impl RunAgentsCardView {
                 }
                 HarnessAvailabilityEvent::Changed
                 | HarnessAvailabilityEvent::AuthSecretsLoaded
-                | HarnessAvailabilityEvent::AuthSecretsFetchFailed => {
+                | HarnessAvailabilityEvent::AuthSecretsFetchFailed
+                | HarnessAvailabilityEvent::AuthSecretDeleted { .. } => {
                     // Repopulate even on fetch failure to replace "Loading…".
+                    // Deleted events also force a repopulate so this card
+                    // stops surfacing the deleted secret as an option.
                     oc::repopulate_all_pickers(&mut me.state.orch, &me.handles.pickers, ctx);
                     me.refresh_accept_button_state(ctx);
                     me.maybe_auto_open_create_modal(ctx);
                     ctx.notify();
                 }
-                HarnessAvailabilityEvent::AuthSecretCreationFailed { .. } => {}
+                HarnessAvailabilityEvent::AuthSecretCreationFailed { .. }
+                | HarnessAvailabilityEvent::AuthSecretDeletionFailed { .. } => {}
             },
         );
 
@@ -746,8 +750,8 @@ impl RunAgentsCardView {
                 state.orch.model_id.clone()
             };
             let is_local = !state.orch.execution_mode.is_remote();
-            let handle = oc::new_standard_picker_dropdown(&colors, ctx);
-            Self::set_upward_menu_position(&handle, ctx);
+            let handle = oc::new_standard_filterable_picker_dropdown(&styles, ctx);
+            Self::set_upward_filterable_menu_position(&handle, ctx);
             oc::populate_model_picker_for_harness(
                 &handle,
                 &initial_model_id,
@@ -755,7 +759,7 @@ impl RunAgentsCardView {
                 is_local,
                 ctx,
             );
-            Self::subscribe_picker_close(&handle, ctx);
+            Self::subscribe_filterable_picker_close(&handle, ctx);
             self.handles.pickers.model_picker = Some(handle);
         }
 
@@ -868,6 +872,17 @@ impl RunAgentsCardView {
         });
     }
 
+    fn set_upward_filterable_menu_position(
+        dropdown_handle: &ViewHandle<
+            crate::view_components::FilterableDropdown<RunAgentsCardViewAction>,
+        >,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        dropdown_handle.update(ctx, |dropdown, _| {
+            dropdown.set_orientation(FilterableDropdownOrientation::Up)
+        });
+    }
+
     fn subscribe_picker_close(
         dropdown_handle: &ViewHandle<
             crate::view_components::dropdown::Dropdown<RunAgentsCardViewAction>,
@@ -876,6 +891,19 @@ impl RunAgentsCardView {
     ) {
         ctx.subscribe_to_view(dropdown_handle, move |me, _, event, ctx| {
             if let DropdownEvent::Close = event {
+                me.refocus_after_picker_close(ctx);
+            }
+        });
+    }
+
+    fn subscribe_filterable_picker_close(
+        dropdown_handle: &ViewHandle<
+            crate::view_components::FilterableDropdown<RunAgentsCardViewAction>,
+        >,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.subscribe_to_view(dropdown_handle, move |me, _, event, ctx| {
+            if let FilterableDropdownEvent::Close = event {
                 me.refocus_after_picker_close(ctx);
             }
         });

@@ -3,8 +3,9 @@ use super::{
     model::{AIBlockModel, AIBlockModelImpl, AIBlockOutputStatus},
     view_impl::common::{
         default_warping_message, render_switch_control_to_user_button, render_warping_indicator,
-        render_warping_indicator_base, waiting_for_user_input_message, ButtonProps,
-        ForceRefreshButtonProps, MaybeShimmeringText, WarpingIndicatorProps, WarpingProps,
+        render_warping_indicator_base, waiting_for_user_input_message, AutoExecuteButtonProps,
+        ButtonProps, ForceRefreshButtonProps, MaybeShimmeringText, WarpingIndicatorProps,
+        WarpingProps,
     },
 };
 use std::collections::HashSet;
@@ -39,7 +40,8 @@ use crate::ai::agent_tips::AITipModel;
 use crate::ai::blocklist::agent_view::child_agent_status_card::ChildAgentStatusCard;
 use crate::ai::blocklist::agent_view::shortcuts::AgentShortcutViewModel;
 use crate::ai::blocklist::agent_view::{
-    agent_view_bg_fill, AgentMessageBar, AgentViewController, EphemeralMessageModel,
+    agent_view_bg_fill, is_in_cloud_context, AgentMessageBar, AgentViewController,
+    EphemeralMessageModel,
 };
 use crate::ai::blocklist::model::AIBlockModelHelper;
 use crate::ai::blocklist::summarization_cancel_dialog::{
@@ -48,7 +50,7 @@ use crate::ai::blocklist::summarization_cancel_dialog::{
 use crate::ai::blocklist::{
     ai_brand_color, BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIContextEvent,
     BlocklistAIContextModel, BlocklistAIController, BlocklistAIHistoryEvent, BlocklistAIInputEvent,
-    BlocklistAIInputModel, ResponseStreamId,
+    BlocklistAIInputModel, QueuedQueryEvent, QueuedQueryModel, ResponseStreamId,
 };
 use crate::ai::llms::LLMPreferences;
 use crate::ai::AgentTip;
@@ -213,11 +215,12 @@ impl BlocklistAIStatusBar {
             }
         });
         ctx.subscribe_to_model(&context_model, |_, _, event, ctx| {
-            if matches!(
-                event,
-                BlocklistAIContextEvent::PendingQueryStateUpdated
-                    | BlocklistAIContextEvent::QueueNextPromptToggled
-            ) {
+            if matches!(event, BlocklistAIContextEvent::PendingQueryStateUpdated) {
+                ctx.notify();
+            }
+        });
+        ctx.subscribe_to_model(&QueuedQueryModel::handle(ctx), |_, _, event, ctx| {
+            if matches!(event, QueuedQueryEvent::QueueNextPromptToggled { .. }) {
                 ctx.notify();
             }
         });
@@ -824,23 +827,25 @@ impl BlocklistAIStatusBar {
                 shimmering_text_handle: &self.shimmering_text_handle,
                 summarization_start_time: self.summarization_start_time,
                 auto_execute_button: (!model.request_type(app).is_passive_code_diff()).then_some(
-                    ButtonProps {
+                    AutoExecuteButtonProps {
                         button_handle: &self.state_handles.autoexecute_button,
                         keystroke: self.autoexecute_keystroke.as_ref(),
                         is_active: model
                             .conversation(app)
                             .map(|c| c.autoexecute_any_action())
                             .unwrap_or(false),
+                        is_locked: is_in_cloud_context(
+                            terminal_model.block_list().agent_view_state(),
+                            &terminal_model,
+                        ),
                     },
                 ),
                 queue_next_prompt_button: FeatureFlag::QueueSlashCommand.is_enabled().then_some(
                     ButtonProps {
                         button_handle: &self.state_handles.queue_next_prompt_button,
                         keystroke: self.queue_next_prompt_keystroke.as_ref(),
-                        is_active: self
-                            .context_model
-                            .as_ref(app)
-                            .is_queue_next_prompt_enabled(),
+                        is_active: QueuedQueryModel::as_ref(app)
+                            .is_queue_next_prompt_enabled(conversation.id()),
                     },
                 ),
                 stop_button: Some(ButtonProps {

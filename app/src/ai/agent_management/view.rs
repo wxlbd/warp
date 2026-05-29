@@ -31,7 +31,7 @@ use warpui::scene::DropShadow;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
-    Action, AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
+    AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 
@@ -82,7 +82,9 @@ use crate::view_components::action_button::{
 use crate::view_components::compactible_action_button::{
     CompactibleActionButton, MEDIUM_SIZE_SWITCH_THRESHOLD,
 };
-use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownStyle};
+use crate::view_components::dropdown::{
+    Dropdown, DropdownAction, DropdownItemAction, DropdownStyle,
+};
 use crate::view_components::{DismissibleToast, FilterableDropdown};
 use crate::workflows::WorkflowType;
 use crate::workspace::{
@@ -516,7 +518,7 @@ impl AgentManagementView {
         let make_status_option =
             |label: String, action: AgentManagementViewAction, icon_data: Option<(Icon, Fill)>| {
                 let mut fields = MenuItemFields::new(label)
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(action));
+                    .with_on_select_action(DropdownAction::select_action_and_close(action));
                 if let Some((icon, color)) = icon_data {
                     fields = fields.with_icon(icon).with_override_icon_color(color);
                 }
@@ -570,9 +572,7 @@ impl AgentManagementView {
     }
 
     /// Build the list of source filter items.
-    fn build_source_dropdown_items(
-        app: &AppContext,
-    ) -> Vec<MenuItem<DropdownAction<AgentManagementViewAction>>> {
+    fn build_source_dropdown_items(app: &AppContext) -> Vec<MenuItem<DropdownAction>> {
         // Build up the sources list
         let mut sources = vec![
             AgentSource::WebApp,
@@ -591,14 +591,14 @@ impl AgentManagementView {
 
         let mut items = vec![MenuItem::Item(
             MenuItemFields::new(text(app, "agent_management.filter.option.all"))
-                .with_on_select_action(DropdownAction::SelectActionAndClose(
+                .with_on_select_action(DropdownAction::select_action_and_close(
                     AgentManagementViewAction::SetSourceFilter(SourceFilter::All),
                 )),
         )];
         for source in sources {
             items.push(MenuItem::Item(
                 MenuItemFields::new(source_display_name(app, &source)).with_on_select_action(
-                    DropdownAction::SelectActionAndClose(
+                    DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetSourceFilter(SourceFilter::Specific(source)),
                     ),
                 ),
@@ -633,7 +633,7 @@ impl AgentManagementView {
         let items = vec![
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetCreatedOnFilter(CreatedOnFilter::All),
                     )),
             ),
@@ -642,19 +642,19 @@ impl AgentManagementView {
                     ctx,
                     "agent_management.filter.created_on.last_24_hours",
                 ))
-                .with_on_select_action(DropdownAction::SelectActionAndClose(
+                .with_on_select_action(DropdownAction::select_action_and_close(
                     AgentManagementViewAction::SetCreatedOnFilter(CreatedOnFilter::Last24Hours),
                 )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.created_on.past_3_days"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetCreatedOnFilter(CreatedOnFilter::Past3Days),
                     )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.created_on.last_week"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetCreatedOnFilter(CreatedOnFilter::LastWeek),
                     )),
             ),
@@ -678,31 +678,31 @@ impl AgentManagementView {
         let items = vec![
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetArtifactFilter(ArtifactFilter::All),
                     )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.artifact.pull_request"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetArtifactFilter(ArtifactFilter::PullRequest),
                     )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.artifact.plan"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetArtifactFilter(ArtifactFilter::Plan),
                     )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.artifact.screenshot"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetArtifactFilter(ArtifactFilter::Screenshot),
                     )),
             ),
             MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.artifact.file"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetArtifactFilter(ArtifactFilter::File),
                     )),
             ),
@@ -729,12 +729,10 @@ impl AgentManagementView {
         dropdown
     }
 
-    fn build_harness_dropdown_items(
-        app: &AppContext,
-    ) -> Vec<MenuItem<DropdownAction<AgentManagementViewAction>>> {
+    fn build_harness_dropdown_items(app: &AppContext) -> Vec<MenuItem<DropdownAction>> {
         let mut items = vec![MenuItem::Item(
             MenuItemFields::new(text(app, "agent_management.filter.option.all"))
-                .with_on_select_action(DropdownAction::SelectActionAndClose(
+                .with_on_select_action(DropdownAction::select_action_and_close(
                     AgentManagementViewAction::SetHarnessFilter(HarnessFilter::All),
                 )),
         )];
@@ -744,7 +742,7 @@ impl AgentManagementView {
             let harness = entry.harness;
             let mut fields = MenuItemFields::new(entry.display_name.clone())
                 .with_icon(harness_display::icon_for(harness))
-                .with_on_select_action(DropdownAction::SelectActionAndClose(
+                .with_on_select_action(DropdownAction::select_action_and_close(
                     AgentManagementViewAction::SetHarnessFilter(HarnessFilter::Specific(harness)),
                 ));
             if let Some(color) = harness_display::brand_color(harness) {
@@ -799,7 +797,7 @@ impl AgentManagementView {
     }
 
     // Initialize the dropdown menu for the filter dropdowns (status, source)
-    fn setup_filter_menu<A: Action + Clone>(
+    fn setup_filter_menu<A: DropdownItemAction>(
         dropdown: &mut Dropdown<A>,
         label_prefix: String,
         ctx: &mut ViewContext<Dropdown<A>>,
@@ -811,7 +809,7 @@ impl AgentManagementView {
     }
 
     // Initialize the dropdown menu for the searchable filter dropdowns (creator)
-    fn setup_searchable_filter_menu<A: Action + Clone>(
+    fn setup_searchable_filter_menu<A: DropdownItemAction>(
         dropdown: &mut FilterableDropdown<A>,
         label_prefix: String,
         ctx: &mut ViewContext<FilterableDropdown<A>>,
@@ -847,14 +845,16 @@ impl AgentManagementView {
         self.environment_dropdown.update(ctx, |dropdown, ctx| {
             let mut items = vec![MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(
+                    DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetEnvironmentFilter(EnvironmentFilter::All),
                     )),
             )];
 
             items.push(MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.none"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(
+                    DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetEnvironmentFilter(
                             EnvironmentFilter::NoEnvironment,
                         ),
@@ -867,7 +867,7 @@ impl AgentManagementView {
             for (environment_id, environment_name) in sorted_envs {
                 items.push(MenuItem::Item(
                     MenuItemFields::new(environment_name).with_on_select_action(
-                        DropdownAction::SelectActionAndClose(
+                        DropdownAction::select_action_and_close(
                             AgentManagementViewAction::SetEnvironmentFilter(
                                 EnvironmentFilter::Specific(environment_id),
                             ),
@@ -892,14 +892,15 @@ impl AgentManagementView {
         self.creator_dropdown.update(ctx, |dropdown, ctx| {
             let mut items = vec![MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(DropdownAction::SelectActionAndClose(
+                    .with_on_select_action(
+                    DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetCreatorFilter(CreatorFilter::All),
                     )),
             )];
             for (name, uid) in creators {
                 items.push(MenuItem::Item(
                     MenuItemFields::new(&name).with_on_select_action(
-                        DropdownAction::SelectActionAndClose(
+                        DropdownAction::select_action_and_close(
                             AgentManagementViewAction::SetCreatorFilter(CreatorFilter::Specific {
                                 name,
                                 uid,

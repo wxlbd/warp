@@ -1,6 +1,5 @@
 use crate::{
     appearance::Appearance,
-    debounce::debounce,
     editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions},
     localization,
     ui_components::icons::Icon,
@@ -11,6 +10,7 @@ use std::time::Duration;
 
 use async_channel::Sender;
 use pathfinder_geometry::vector::vec2f;
+use warp_core::r#async::debounce;
 use warp_editor::render::model::{AutoScrollMode, Decoration};
 use warp_editor::search::{SearchEvent, Searcher};
 use warpui::accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole};

@@ -41,6 +41,7 @@ use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
 use crate::settings::{AISettings, AISettingsChangedEvent, AgentModeCommandExecutionPredicate};
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, DangerSecondaryTheme};
+use crate::view_components::dropdown::DropdownAction;
 use crate::view_components::{
     Dropdown, DropdownItem, FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
 };
@@ -1236,7 +1237,7 @@ impl ExecutionProfileEditorView {
 
             let items = available_model_menu_items(
                 choices,
-                |llm| create_action(llm.id.clone()).into(),
+                |llm| DropdownAction::select_action_and_close(create_action(llm.id.clone())),
                 None,
                 None,
                 false,
@@ -1285,7 +1286,9 @@ impl ExecutionProfileEditorView {
             let items = available_model_menu_items(
                 choices,
                 |llm| {
-                    ExecutionProfileEditorViewAction::SetCodingModel { id: llm.id.clone() }.into()
+                    DropdownAction::select_action_and_close(
+                        ExecutionProfileEditorViewAction::SetCodingModel { id: llm.id.clone() },
+                    )
                 },
                 None,
                 None,

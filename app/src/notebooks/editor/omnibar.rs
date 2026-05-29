@@ -373,7 +373,7 @@ impl View for Omnibar {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OmnibarAction {
     /// Toggle bold styling on the selected text.
     BoldSelection,

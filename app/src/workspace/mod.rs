@@ -20,6 +20,7 @@ mod one_time_modal_model;
 mod registry;
 pub mod rewind_confirmation_dialog;
 pub mod sync_inputs;
+pub mod tab_group;
 pub mod tab_settings;
 mod toast_stack;
 pub mod util;
@@ -43,16 +44,12 @@ use warp_core::context_flag::ContextFlag;
 use warpui::accessibility::AccessibilityVerbosity;
 use warpui::elements::DropTargetData;
 use warpui::keymap::FixedBinding;
-use warpui::{AppContext, SingletonEntity};
-
-use crate::ai::skills::SkillManager;
-use crate::ai::AIRequestUsageModel;
+use warpui::AppContext;
 use crate::channel::{Channel, ChannelState};
 use crate::features::FeatureFlag;
 use crate::palette::PaletteMode;
 use crate::pane_group::TabBarHoverIndex;
 use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
-use crate::settings::AISettings;
 use crate::settings_view::{self, flags, SettingsSection};
 use crate::tab::uses_vertical_tabs;
 use crate::util::bindings::{self, cmd_or_ctrl_shift, is_binding_pty_compliant, CustomAction};
@@ -61,20 +58,6 @@ use crate::{code, modal, notebooks, tab_configs};
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {
     warpui::elements::CornerRadius::with_top(warpui::elements::Radius::Pixels(8.))
-}
-
-/// Returns `true` when `WorkspaceAction::SendFeedback` will launch the guided
-/// feedback skill in a new agent pane. When `false`, the action falls back to
-/// opening the GitHub issue form in the browser.
-///
-/// Kept in sync with the availability check in `Workspace::send_feedback` so
-/// the command palette label and the menu item behavior never diverge.
-pub fn is_feedback_skill_available(ctx: &AppContext) -> bool {
-    AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
-        && AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx)
-        && SkillManager::as_ref(ctx)
-            .active_bundled_skill("feedback", ctx)
-            .is_some()
 }
 
 pub use one_time_modal_model::OneTimeModalModel;
@@ -1813,15 +1796,9 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
             "workspace:send_feedback",
-            BindingDescription::new("Send feedback (opens external link)").with_dynamic_override(
-                |ctx| {
-                    let key = if is_feedback_skill_available(ctx) {
-                        "workspace.binding.send_feedback_with_oz"
-                    } else {
-                        "workspace.binding.send_feedback"
-                    };
-                    Some(localization::text_for_app(ctx, key))
-                },
+            binding_description(
+                "Send feedback (opens external link)",
+                "workspace.binding.send_feedback",
             ),
             WorkspaceAction::SendFeedback,
         )

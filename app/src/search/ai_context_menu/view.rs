@@ -24,7 +24,7 @@ use warpui::{
 
 use super::styles;
 use crate::appearance::Appearance;
-use crate::debounce::debounce;
+use crate::debounce;
 use crate::drive::settings::WarpDriveSettings;
 use crate::localization;
 #[cfg(not(target_family = "wasm"))]

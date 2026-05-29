@@ -626,6 +626,7 @@ impl AgentDriverRunner {
         // Local CLI-created runs may not have a task yet, so those setup events explicitly no-op.
         let mut task_id: Option<AmbientAgentTaskId> =
             args.task_id.as_deref().and_then(|s| s.parse().ok());
+        Self::set_ambient_agent_task_id(&foreground, task_id).await?;
         let background = foreground.spawn(|_, ctx| ctx.background_executor()).await?;
         let setup_events = match task_id {
             Some(task_id) => SetupClientEventReporter::new(task_id, server_api.clone(), background),
@@ -813,6 +814,21 @@ impl AgentDriverRunner {
             .await?
             .await
             .map_err(|_| AgentDriverError::TeamMetadataRefreshTimeout)
+    }
+
+    async fn set_ambient_agent_task_id(
+        foreground: &ModelSpawner<Self>,
+        task_id: Option<AmbientAgentTaskId>,
+    ) -> Result<(), AgentDriverError> {
+        foreground
+            .spawn(move |_, ctx| {
+                ServerApiProvider::handle(ctx)
+                    .as_ref(ctx)
+                    .get()
+                    .set_ambient_agent_task_id(task_id);
+            })
+            .await?;
+        Ok(())
     }
 
     /// Resolve the skill spec from args, if one was provided.
@@ -1031,15 +1047,8 @@ impl AgentDriverRunner {
             }
         };
 
-        foreground
-            .spawn(move |_, ctx| {
-                // Set the task ID on the ServerApi so it's sent with all subsequent requests.
-                ServerApiProvider::handle(ctx)
-                    .as_ref(ctx)
-                    .get()
-                    .set_ambient_agent_task_id(task_id);
-            })
-            .await?;
+        // Set the task ID on the ServerApi so it's sent with all subsequent requests.
+        Self::set_ambient_agent_task_id(foreground, task_id).await?;
         driver_options.task_id = task_id;
 
         Ok(())
@@ -1081,6 +1090,9 @@ impl AgentDriverRunner {
                 None
             }
         };
+        // Set the task ID on the ServerApi before any task-scoped server calls below, so failures
+        // during setup can still be reported with cloud-agent context.
+        Self::set_ambient_agent_task_id(foreground, parsed_task_id).await?;
 
         // Fetch secrets, task metadata, regular attachments, and handoff snapshot
         // attachments in parallel. The handoff snapshot fetch is independent of the
@@ -1260,16 +1272,6 @@ impl AgentDriverRunner {
                 task_harness,
             )?;
         }
-
-        // Set the task ID on the ServerApi so it's sent with all subsequent requests.
-        foreground
-            .spawn(move |_, ctx| {
-                ServerApiProvider::handle(ctx)
-                    .as_ref(ctx)
-                    .get()
-                    .set_ambient_agent_task_id(parsed_task_id);
-            })
-            .await?;
 
         driver_options.task_id = parsed_task_id;
         driver_options.parent_run_id = parent_run_id;
