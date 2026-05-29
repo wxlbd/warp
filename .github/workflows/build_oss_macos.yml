@@ -1,0 +1,59 @@
+name: Build OSS macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "zh-cn-i18n*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-oss-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  WARP_SKIP_COMMON_SKILLS_INSTALL: "1"
+
+jobs:
+  build_macos_app:
+    name: Build WarpOss.app
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          xcrun --find metal
+          rustup show
+          cargo --version
+        shell: bash
+
+      - name: Install cargo-bundle
+        run: script/install_cargo_bundle
+        shell: bash
+
+      - name: Build macOS OSS app bundle
+        run: ./script/run --dont-open
+        shell: bash
+
+      - name: Archive app bundle
+        run: |
+          ditto -c -k --keepParent \
+            target/debug/bundle/osx/WarpOss.app \
+            "WarpOss-macos-${GITHUB_SHA}.zip"
+        shell: bash
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: WarpOss-macos-${{ github.sha }}
+          path: WarpOss-macos-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 14
