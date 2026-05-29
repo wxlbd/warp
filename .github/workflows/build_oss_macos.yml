@@ -1,4 +1,4 @@
-name: Build OSS macOS App
+name: Build OSS macOS DMG
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ env:
 
 jobs:
   build_macos_app:
-    name: Build WarpOss.app
+    name: Build WarpOss.dmg
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -35,25 +35,35 @@ jobs:
           cargo --version
         shell: bash
 
-      - name: Install cargo-bundle
-        run: script/install_cargo_bundle
-        shell: bash
-
-      - name: Build macOS OSS app bundle
-        run: ./script/run --dont-open
-        shell: bash
-
-      - name: Archive app bundle
+      - name: Install packaging tools
         run: |
-          ditto -c -k --keepParent \
-            target/debug/bundle/osx/WarpOss.app \
-            "WarpOss-macos-${GITHUB_SHA}.zip"
+          script/install_cargo_bundle
+          brew install create-dmg
         shell: bash
 
-      - name: Upload app artifact
+      - name: Build unsigned macOS OSS DMG
+        id: bundle
+        run: |
+          dmg_suffix="${RUNNER_ARCH}-${GITHUB_SHA::7}"
+
+          ./script/bundle \
+            --channel oss \
+            --nosign \
+            --nouniversal \
+            --dmg-name-suffix "$dmg_suffix"
+
+          dmg_path="$(find target -path "*/bundle/osx/WarpOss-${dmg_suffix}.dmg" -type f ! -path "*/dmg/*" | head -n 1)"
+          if [[ -z "$dmg_path" ]]; then
+            echo "No DMG produced" >&2
+            exit 1
+          fi
+          echo "dmg_path=$dmg_path" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: WarpOss-macos-${{ github.sha }}
-          path: WarpOss-macos-${{ github.sha }}.zip
+          name: WarpOss-macos-dmg-${{ github.sha }}
+          path: ${{ steps.bundle.outputs.dmg_path }}
           if-no-files-found: error
           retention-days: 14
