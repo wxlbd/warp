@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+#
+# Convenience wrapper for building an installable local macOS OSS DMG.
+#
+# Default output:
+#   target/<profile>/bundle/osx/WarpOss-<suffix>.dmg
+#
+# The default is intentionally unsigned/not notarized because local forks
+# usually do not have Warp's Developer ID certificate or notarization secrets.
+# macOS may warn on first launch; use --selfsign if you have a local Apple
+# Development certificate and want the app bundle signed before it is placed
+# into the DMG.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO_ROOT"
+
+CHANNEL="oss"
+INSTALL_DEPS=false
+CHECK_DEPS_ONLY=false
+OPEN_OUTPUT=false
+SIGN_MODE="nosign"
+UNIVERSAL=false
+DEBUG=true
+DMG_SUFFIX=""
+CARGO_JOBS=""
+EXTRA_BUNDLE_ARGS=()
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./script/macos/package_oss_dmg [options] [-- extra ./script/bundle args]
+
+Options:
+  --channel <oss|local|dev|preview|stable>
+      Build channel. Defaults to oss.
+
+  --suffix <name>
+      DMG filename suffix. Defaults to local-<timestamp>-<git-sha>.
+
+  --universal
+      Build a universal x86_64 + arm64 app. Defaults to native arch only.
+
+  --selfsign
+      Sign the .app with the first local Apple Development cert, falling back
+      to ad-hoc signing. The DMG is still not notarized.
+
+  --debug
+      Use the bundle script's debug build mode. This is the default because
+      release-lto builds can be killed by macOS on developer machines.
+
+  --release
+      Build with the bundle script's release profile. Slower and much more
+      memory hungry, but closer to CI/release artifacts.
+
+  --jobs <n>
+      Set CARGO_BUILD_JOBS for the build, useful when release builds are
+      killed under memory pressure.
+
+  --install-deps
+      Install local packaging dependencies with Homebrew and project scripts:
+      cargo-bundle, create-dmg, protobuf, and Apple's Metal Toolchain.
+
+  --check-deps
+      Check packaging dependencies and exit without building.
+
+  --open
+      Open the DMG output directory after a successful build.
+
+  -h, --help
+      Show this help.
+
+Examples:
+  ./script/macos/package_oss_dmg
+  ./script/macos/package_oss_dmg --selfsign --suffix test
+  ./script/macos/package_oss_dmg --universal --open
+  ./script/macos/package_oss_dmg -- --features some_extra_feature
+EOF
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+while (($#)); do
+  case "$1" in
+    --channel)
+      [[ $# -ge 2 ]] || die "--channel requires a value"
+      CHANNEL="$2"
+      shift 2
+      ;;
+    --suffix)
+      [[ $# -ge 2 ]] || die "--suffix requires a value"
+      DMG_SUFFIX="$2"
+      shift 2
+      ;;
+    --universal)
+      UNIVERSAL=true
+      shift
+      ;;
+    --selfsign)
+      SIGN_MODE="selfsign"
+      shift
+      ;;
+    --debug)
+      DEBUG=true
+      shift
+      ;;
+    --release)
+      DEBUG=false
+      shift
+      ;;
+    --jobs)
+      [[ $# -ge 2 ]] || die "--jobs requires a value"
+      CARGO_JOBS="$2"
+      shift 2
+      ;;
+    --install-deps)
+      INSTALL_DEPS=true
+      shift
+      ;;
+    --check-deps)
+      CHECK_DEPS_ONLY=true
+      shift
+      ;;
+    --open)
+      OPEN_OUTPUT=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      EXTRA_BUNDLE_ARGS=("$@")
+      break
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+case "$CHANNEL" in
+  oss) APP_NAME="WarpOss" ;;
+  local) APP_NAME="WarpLocal" ;;
+  dev) APP_NAME="WarpDev" ;;
+  preview) APP_NAME="WarpPreview" ;;
+  stable) APP_NAME="Warp" ;;
+  *) die "--channel must be one of: oss, local, dev, preview, stable" ;;
+esac
+
+install_deps() {
+  have brew || die "Homebrew is required for --install-deps"
+
+  echo "Installing cargo-bundle..."
+  ./script/install_cargo_bundle
+
+  echo "Installing cargo-about..."
+  ./script/install_cargo_release_deps --no-build-deps
+
+  echo "Installing create-dmg and protobuf..."
+  brew install create-dmg protobuf
+
+  echo "Installing Apple Metal Toolchain..."
+  ./script/macos/install_build_deps
+}
+
+check_deps() {
+  local missing=()
+
+  have cargo || missing+=("cargo")
+  have rustc || missing+=("rustc")
+  have create-dmg || missing+=("create-dmg")
+  have protoc || missing+=("protoc")
+
+  if ! have cargo-bundle; then
+    missing+=("cargo-bundle")
+  fi
+
+  if ! have cargo-about; then
+    missing+=("cargo-about")
+  fi
+
+  if ! xcrun --find metal >/dev/null 2>&1; then
+    missing+=("Apple Metal Toolchain")
+  fi
+
+  if ((${#missing[@]})); then
+    cat >&2 <<EOF
+Missing packaging dependencies: ${missing[*]}
+
+Install them with:
+  ./script/macos/package_oss_dmg --install-deps
+
+Or manually:
+  ./script/install_cargo_bundle
+  ./script/install_cargo_release_deps --no-build-deps
+  brew install create-dmg protobuf
+  ./script/macos/install_build_deps
+EOF
+    exit 1
+  fi
+}
+
+default_suffix() {
+  local ts sha
+  ts="$(date +%Y%m%d-%H%M%S)"
+  if sha="$(git rev-parse --short HEAD 2>/dev/null)"; then
+    echo "local-$ts-$sha"
+  else
+    echo "local-$ts"
+  fi
+}
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  die "macOS DMG packaging must run on macOS"
+fi
+
+if [[ "$INSTALL_DEPS" == true ]]; then
+  install_deps
+fi
+
+check_deps
+
+if [[ "$CHECK_DEPS_ONLY" == true ]]; then
+  echo "All packaging dependencies are available."
+  exit 0
+fi
+
+if [[ -z "$DMG_SUFFIX" ]]; then
+  DMG_SUFFIX="$(default_suffix)"
+fi
+
+if [[ -n "$CARGO_JOBS" ]]; then
+  export CARGO_BUILD_JOBS="$CARGO_JOBS"
+fi
+
+bundle_args=(
+  --channel "$CHANNEL"
+  --dmg-name-suffix "$DMG_SUFFIX"
+)
+
+if [[ "$SIGN_MODE" == "selfsign" ]]; then
+  bundle_args+=(--selfsign)
+else
+  bundle_args+=(--nosign)
+fi
+
+if [[ "$UNIVERSAL" != true ]]; then
+  bundle_args+=(--nouniversal)
+fi
+
+if [[ "$DEBUG" == true ]]; then
+  bundle_args+=(--debug)
+fi
+
+if ((${#EXTRA_BUNDLE_ARGS[@]})); then
+  bundle_args+=("${EXTRA_BUNDLE_ARGS[@]}")
+fi
+
+echo "Building $APP_NAME DMG..."
+if [[ "$DEBUG" == true ]]; then
+  echo "Using debug profile for local packaging. Pass --release for release-lto."
+else
+  echo "Using release-lto profile. If this is killed by macOS, rerun without --release."
+fi
+if [[ -n "${CARGO_BUILD_JOBS:-}" ]]; then
+  echo "Using CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS"
+fi
+echo "./script/bundle ${bundle_args[*]}"
+set +e
+./script/bundle "${bundle_args[@]}"
+bundle_status=$?
+set -e
+
+if [[ $bundle_status -eq 137 ]]; then
+  die "./script/bundle was killed by SIGKILL, usually due to release-lto memory pressure. For local installation, run: ./script/macos/package_oss_dmg --selfsign --open"
+elif [[ $bundle_status -ne 0 ]]; then
+  die "./script/bundle failed with exit code $bundle_status"
+fi
+
+dmg_name="$APP_NAME-$DMG_SUFFIX.dmg"
+dmg_path="$(find target -path "*/bundle/osx/$dmg_name" -type f ! -path "*/dmg/*" | head -n 1)"
+
+if [[ -z "$dmg_path" ]]; then
+  die "expected DMG was not produced: $dmg_name"
+fi
+
+echo
+echo "DMG created:"
+echo "  $dmg_path"
+
+if [[ "$OPEN_OUTPUT" == true ]]; then
+  open "$(dirname "$dmg_path")"
+fi

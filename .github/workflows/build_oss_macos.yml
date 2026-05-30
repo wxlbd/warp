@@ -38,7 +38,9 @@ jobs:
       - name: Install packaging tools
         run: |
           script/install_cargo_bundle
+          script/install_cargo_release_deps --no-build-deps
           brew install create-dmg protobuf
+          cargo about --version
           protoc --version
         shell: bash
 
