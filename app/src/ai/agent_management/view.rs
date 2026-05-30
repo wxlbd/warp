@@ -845,16 +845,14 @@ impl AgentManagementView {
         self.environment_dropdown.update(ctx, |dropdown, ctx| {
             let mut items = vec![MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(
-                    DropdownAction::select_action_and_close(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetEnvironmentFilter(EnvironmentFilter::All),
                     )),
             )];
 
             items.push(MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.none"))
-                    .with_on_select_action(
-                    DropdownAction::select_action_and_close(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetEnvironmentFilter(
                             EnvironmentFilter::NoEnvironment,
                         ),
@@ -892,8 +890,7 @@ impl AgentManagementView {
         self.creator_dropdown.update(ctx, |dropdown, ctx| {
             let mut items = vec![MenuItem::Item(
                 MenuItemFields::new(text(ctx, "agent_management.filter.option.all"))
-                    .with_on_select_action(
-                    DropdownAction::select_action_and_close(
+                    .with_on_select_action(DropdownAction::select_action_and_close(
                         AgentManagementViewAction::SetCreatorFilter(CreatorFilter::All),
                     )),
             )];

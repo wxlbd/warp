@@ -108,6 +108,16 @@ struct SecretCreationState {
     pending_name: Option<String>,
 }
 
+/// Validated, ready-to-submit snapshot of the creation form.
+struct ValidatedForm {
+    harness: Harness,
+    info: &'static AuthSecretTypeInfo,
+    /// Trimmed; non-empty.
+    name: String,
+    /// One per `info.fields`. Required fields are non-empty after trimming.
+    field_values: Vec<String>,
+}
+
 pub struct AuthSecretFtuxView {
     harness: Harness,
     ftux_dropdown: ViewHandle<AuthSecretFtuxDropdown>,
@@ -144,7 +154,7 @@ impl AuthSecretFtuxView {
         );
 
         ctx.subscribe_to_view(&name_editor, |me, _, event, ctx| {
-            me.handle_form_editor_nav(0, event, ctx);
+            me.handle_form_editor_event(0, event, ctx);
         });
 
         let ftux_dropdown =
@@ -512,7 +522,7 @@ impl AuthSecretFtuxView {
         }
     }
 
-    fn handle_form_editor_nav(
+    fn handle_form_editor_event(
         &self,
         editor_index: usize,
         event: &EditorEvent,
@@ -537,6 +547,8 @@ impl AuthSecretFtuxView {
                 }
                 _ => {}
             },
+            // Re-render so the Continue button restyles as the user types.
+            EditorEvent::Edited(_) => ctx.notify(),
             _other => {}
         }
     }
@@ -558,7 +570,7 @@ impl AuthSecretFtuxView {
                 make_single_line_editor(Some(placeholder.to_string()), field.sensitive, ctx);
             let editor_index = field_idx + 1;
             ctx.subscribe_to_view(&editor, move |me, _, event, ctx| {
-                me.handle_form_editor_nav(editor_index, event, ctx);
+                me.handle_form_editor_event(editor_index, event, ctx);
             });
             editors.push(editor);
         }
@@ -582,6 +594,50 @@ impl AuthSecretFtuxView {
         auth_secret_types_for_harness(state.harness).get(state.secret_type_index)
     }
 
+    /// Validated form snapshot; `None` if not ready to submit. Single
+    /// source of truth for both `can_submit_creation_form` and
+    /// `handle_continue`.
+    fn validated_form_snapshot(&self, ctx: &AppContext) -> Option<ValidatedForm> {
+        let state = self.creation_state.as_ref()?;
+        if state.is_saving {
+            return None;
+        }
+        let info = auth_secret_types_for_harness(state.harness).get(state.secret_type_index)?;
+        if self.field_editors.len() != info.fields.len() {
+            return None;
+        }
+        let name = self
+            .name_editor
+            .as_ref(ctx)
+            .buffer_text(ctx)
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return None;
+        }
+        let field_values: Vec<String> = self
+            .field_editors
+            .iter()
+            .map(|e| e.as_ref(ctx).buffer_text(ctx))
+            .collect();
+        for (field, value) in info.fields.iter().zip(field_values.iter()) {
+            if !field.optional && value.trim().is_empty() {
+                return None;
+            }
+        }
+        Some(ValidatedForm {
+            harness: state.harness,
+            info,
+            name,
+            field_values,
+        })
+    }
+
+    /// Whether the Continue button should be enabled.
+    fn can_submit_creation_form(&self, ctx: &AppContext) -> bool {
+        self.validated_form_snapshot(ctx).is_some()
+    }
+
     fn handle_skip(&mut self, ctx: &mut ViewContext<Self>) {
         if self.skip_hidden {
             return;
@@ -602,39 +658,23 @@ impl AuthSecretFtuxView {
     }
 
     fn handle_continue(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(state) = self.creation_state.as_ref() else {
+        // The button is disabled when the form isn't ready; no-op if we
+        // got dispatched anyway.
+        let Some(form) = self.validated_form_snapshot(ctx) else {
             return;
         };
-        if state.is_saving {
-            return;
-        }
-        let harness = state.harness;
-        let type_index = state.secret_type_index;
-        let Some(info) = auth_secret_types_for_harness(harness).get(type_index) else {
-            return;
-        };
-
-        let name = self.name_editor.as_ref(ctx).buffer_text(ctx);
-        let trimmed_name = name.trim();
-        if trimmed_name.is_empty() {
-            HarnessAvailabilityModel::handle(ctx).update(ctx, |_model, ctx| {
-                ctx.emit(HarnessAvailabilityEvent::AuthSecretCreationFailed {
-                    error: localization::text_for_app(ctx, "terminal.auth_secret.error.enter_name"),
-                });
-            });
-            return;
-        }
-        let name = trimmed_name.to_string();
-
-        let field_values: Vec<String> = self
-            .field_editors
-            .iter()
-            .map(|e| e.as_ref(ctx).buffer_text(ctx))
-            .collect();
+        let ValidatedForm {
+            harness,
+            info,
+            name,
+            field_values,
+        } = form;
 
         let value = match build_managed_secret_value(info, &field_values) {
             Ok(v) => v,
             Err(err) => {
+                // Defensive: `validated_form_snapshot` already enforces
+                // the same required-field rules.
                 let msg = err.to_string();
                 HarnessAvailabilityModel::handle(ctx).update(ctx, |_model, ctx| {
                     ctx.emit(HarnessAvailabilityEvent::AuthSecretCreationFailed { error: msg });
@@ -919,24 +959,35 @@ impl AuthSecretFtuxView {
         mouse_state: MouseStateHandle,
         background: Option<Fill>,
         action: AuthSecretFtuxAction,
+        disabled: bool,
         app: &AppContext,
     ) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let theme = appearance.theme();
         let font_family = appearance.ui_font_family();
-        let text_color = theme.foreground();
+        // Mirrors the design system's `DisabledTheme`.
+        let text_color = if disabled {
+            internal_colors::neutral_5(theme)
+        } else {
+            theme.foreground().into()
+        };
+        let effective_background = if disabled {
+            background.map(|_| Fill::from(internal_colors::neutral_4(theme)))
+        } else {
+            background
+        };
         Hoverable::new(mouse_state, move |_| {
             let inner = Container::new(
                 Text::new_inline(label.to_string(), font_family, BUTTON_FONT_SIZE)
                     .with_style(Properties::default().weight(Weight::Semibold))
-                    .with_color(text_color.into())
+                    .with_color(text_color)
                     .finish(),
             )
             .with_padding_left(BUTTON_PADDING * 2.)
             .with_padding_right(BUTTON_PADDING * 2.)
             .with_padding_top(BUTTON_PADDING)
             .with_padding_bottom(BUTTON_PADDING);
-            let inner = if let Some(background) = background {
+            let inner = if let Some(background) = effective_background {
                 inner
                     .with_background(background)
                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(CORNER_RADIUS)))
@@ -945,8 +996,15 @@ impl AuthSecretFtuxView {
             };
             inner.finish()
         })
-        .with_cursor(warpui::platform::Cursor::PointingHand)
+        .with_cursor(if disabled {
+            warpui::platform::Cursor::Arrow
+        } else {
+            warpui::platform::Cursor::PointingHand
+        })
         .on_click(move |ctx, _, _| {
+            if disabled {
+                return;
+            }
             ctx.dispatch_typed_action(action.clone());
         })
         .finish()
@@ -972,15 +1030,18 @@ impl AuthSecretFtuxView {
             self.back_button_mouse_state.clone(),
             None,
             action,
+            false,
             app,
         ));
 
         let accent_fill = Appearance::as_ref(app).theme().accent();
+        let continue_disabled = !self.can_submit_creation_form(app);
         row.add_child(self.render_button(
             localization::text_for_app(app, "settings.action.continue"),
             self.continue_mouse_state.clone(),
             Some(accent_fill),
             AuthSecretFtuxAction::Continue,
+            continue_disabled,
             app,
         ));
 

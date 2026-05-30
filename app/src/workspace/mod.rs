@@ -26,6 +26,15 @@ mod toast_stack;
 pub mod util;
 pub mod view;
 
+use crate::channel::{Channel, ChannelState};
+use crate::features::FeatureFlag;
+use crate::palette::PaletteMode;
+use crate::pane_group::TabBarHoverIndex;
+use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
+use crate::settings_view::{self, flags, SettingsSection};
+use crate::tab::uses_vertical_tabs;
+use crate::util::bindings::{self, cmd_or_ctrl_shift, is_binding_pty_compliant, CustomAction};
+use crate::{code, modal, notebooks, tab_configs};
 pub use action::{
     AutoCloudHandoffTrigger, CommandSearchOptions, InitContent, RestoreConversationLayout,
     TabContextMenuAnchor, VerticalTabsPaneContextMenuTarget, WorkspaceAction,
@@ -45,15 +54,6 @@ use warpui::accessibility::AccessibilityVerbosity;
 use warpui::elements::DropTargetData;
 use warpui::keymap::FixedBinding;
 use warpui::AppContext;
-use crate::channel::{Channel, ChannelState};
-use crate::features::FeatureFlag;
-use crate::palette::PaletteMode;
-use crate::pane_group::TabBarHoverIndex;
-use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
-use crate::settings_view::{self, flags, SettingsSection};
-use crate::tab::uses_vertical_tabs;
-use crate::util::bindings::{self, cmd_or_ctrl_shift, is_binding_pty_compliant, CustomAction};
-use crate::{code, modal, notebooks, tab_configs};
 
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {
@@ -805,6 +805,17 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| FeatureFlag::VerticalTabs.is_enabled())
         .with_key_binding(cmd_or_ctrl_shift("b")),
         EditableBinding::new(
+            LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
+            binding_description(
+                "Left Panel: Project explorer",
+                "workspace.binding.left_panel_project_explorer",
+            ),
+            WorkspaceAction::ToggleProjectExplorer,
+        )
+        .with_group(bindings::BindingGroup::Navigation.as_str())
+        .with_context_predicate(id!("Workspace") & id!(flags::SHOW_PROJECT_EXPLORER))
+        .with_custom_action(CustomAction::ToggleProjectExplorer),
+        EditableBinding::new(
             LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME,
             binding_description(
                 "Left Panel: Agent conversations",
@@ -816,17 +827,6 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & id!(flags::SHOW_CONVERSATION_HISTORY))
         .with_enabled(|| FeatureFlag::AgentViewConversationListView.is_enabled())
         .with_custom_action(CustomAction::ToggleConversationListView),
-        EditableBinding::new(
-            LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
-            binding_description(
-                "Left Panel: Project explorer",
-                "workspace.binding.left_panel_project_explorer",
-            ),
-            WorkspaceAction::ToggleProjectExplorer,
-        )
-        .with_group(bindings::BindingGroup::Navigation.as_str())
-        .with_context_predicate(id!("Workspace") & id!(flags::SHOW_PROJECT_EXPLORER))
-        .with_custom_action(CustomAction::ToggleProjectExplorer),
         EditableBinding::new(
             LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
             binding_description(

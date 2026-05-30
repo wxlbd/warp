@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::{
     app_icon::AppIconSettings, app_installation_detection::UserAppInstallDetectionSettings,
     cloud_preferences::CloudPreferencesSettings, initializer::SettingsInitializer,
@@ -329,15 +331,14 @@ pub fn init_public_user_preferences() -> (user_preferences::Model, Option<user_p
 /// 3. The migration-complete marker is absent from the native store
 ///    (handles the case where a user deletes `settings.toml` to reset).
 fn needs_settings_file_migration(ctx: &AppContext) -> bool {
-    should_migrate_settings_file(ctx, super::user_preferences_toml_file_path().exists())
+    needs_settings_file_migration_for_path(ctx, &super::user_preferences_toml_file_path())
 }
 
-fn should_migrate_settings_file(ctx: &AppContext, settings_file_exists: bool) -> bool {
+fn needs_settings_file_migration_for_path(ctx: &AppContext, settings_file_path: &Path) -> bool {
     if !FeatureFlag::SettingsFile.is_enabled() {
         return false;
     }
-
-    if settings_file_exists {
+    if settings_file_path.exists() {
         return false;
     }
 

@@ -10,6 +10,7 @@ use warpui::{
 
 use crate::{
     appearance::Appearance,
+    localization,
     ui_components::dialog::{dialog_styles, Dialog},
     view_components::action_button::{ActionButton, DangerPrimaryTheme, NakedTheme},
 };
@@ -42,14 +43,22 @@ pub(super) struct DeleteAuthSecretConfirmationDialog {
 
 impl DeleteAuthSecretConfirmationDialog {
     pub(super) fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let cancel_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Cancel", NakedTheme).on_click(|ctx| {
+        let cancel_button = ctx.add_typed_action_view(|ctx| {
+            ActionButton::new(
+                localization::text_for_app(ctx, "settings.action.cancel"),
+                NakedTheme,
+            )
+            .on_click(|ctx| {
                 ctx.dispatch_typed_action(DeleteAuthSecretConfirmationDialogAction::Cancel);
             })
         });
 
-        let delete_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Delete", DangerPrimaryTheme).on_click(|ctx| {
+        let delete_button = ctx.add_typed_action_view(|ctx| {
+            ActionButton::new(
+                localization::text_for_app(ctx, "settings.action.delete"),
+                DangerPrimaryTheme,
+            )
+            .on_click(|ctx| {
                 ctx.dispatch_typed_action(DeleteAuthSecretConfirmationDialogAction::Confirm);
             })
         });
