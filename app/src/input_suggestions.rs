@@ -1,4 +1,3 @@
-use crate::localization;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::ops::Range;
@@ -33,6 +32,7 @@ use warpui::{
 
 use crate::ai::blocklist::{render_ai_agent_mode_icon, AIQueryHistory, AIQueryHistoryOutputStatus};
 use crate::appearance::Appearance;
+use crate::localization;
 use crate::terminal::history::LinkedWorkflowData;
 use crate::terminal::model::session::SessionId;
 use crate::terminal::rich_history::{render_ai_query_rich_history, render_rich_history};

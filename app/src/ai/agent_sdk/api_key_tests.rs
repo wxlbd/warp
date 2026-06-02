@@ -1,5 +1,6 @@
-use super::*;
 use warpui::App;
+
+use super::*;
 
 fn key(name: &str, scope: &str, created_at: DateTime<Utc>) -> ApiKeyInfo {
     key_with_uid(name, name, scope, created_at)

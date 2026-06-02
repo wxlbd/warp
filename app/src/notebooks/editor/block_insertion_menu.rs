@@ -1,4 +1,3 @@
-use crate::localization;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +19,7 @@ use crate::appearance::Appearance;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::{ObjectIdType, Space};
 use crate::drive::CloudObjectTypeAndId;
+use crate::localization;
 use crate::menu::{self, Menu, MenuItemFields};
 use crate::notebooks::telemetry::EmbeddedObjectInfo;
 use crate::search::notebook_embedding::searcher::EmbeddingSearchItemAction;

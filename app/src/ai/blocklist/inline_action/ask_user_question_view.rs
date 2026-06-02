@@ -1,4 +1,3 @@
-use crate::localization;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +57,7 @@ use crate::view_components::action_button::{
 };
 use crate::view_components::compactible_action_button::CompactibleActionButton;
 use crate::view_components::dropdown::{Dropdown, DropdownItem};
-use crate::Appearance;
+use crate::{localization, Appearance};
 
 const ASK_USER_QUESTION_ACTIVE: &str = "AskUserQuestionActive";
 

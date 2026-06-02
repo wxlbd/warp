@@ -1,11 +1,3 @@
-use crate::localization;
-use crate::{
-    appearance::Appearance,
-    changelog_model::{ChangelogHeader, ChangelogModel, ChangelogState, Event as ChangelogEvent},
-    settings::LanguageSettings,
-    themes::theme::Fill,
-    ui_components::icons,
-};
 use instant::Instant;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::features::FeatureFlag;
@@ -23,8 +15,15 @@ use warpui::{
 
 use super::feature_section::FeatureSection;
 use super::{SectionAction, SectionView};
-use crate::send_telemetry_from_ctx;
+use crate::appearance::Appearance;
+use crate::changelog_model::{
+    ChangelogHeader, ChangelogModel, ChangelogState, Event as ChangelogEvent,
+};
 use crate::server::telemetry::TelemetryEvent;
+use crate::settings::LanguageSettings;
+use crate::themes::theme::Fill;
+use crate::ui_components::icons;
+use crate::{localization, send_telemetry_from_ctx};
 
 #[derive(Default)]
 struct ChangelogMouseStateHandles {

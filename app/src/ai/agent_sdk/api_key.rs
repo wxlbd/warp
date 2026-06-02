@@ -1,8 +1,6 @@
-use crate::localization;
 use std::cmp::Reverse;
 use std::fmt;
 use std::io::{self, IsTerminal as _};
-use warp_localization::LocaleId;
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -19,6 +17,7 @@ use warp_graphql::mutations::expire_api_key::ExpireApiKeyResult;
 use warp_graphql::mutations::generate_api_key::GenerateApiKeyResult;
 use warp_graphql::queries::api_keys::ApiKeyProperties;
 use warp_graphql::scalars::Time;
+use warp_localization::LocaleId;
 use warpui::platform::TerminationMode;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
@@ -26,7 +25,7 @@ use super::output::{self, TableFormat};
 use crate::server::ids::ApiKeyUid;
 use crate::server::server_api::auth::AuthClient;
 use crate::util::time_format::format_approx_duration_from_now_utc;
-use crate::ServerApiProvider;
+use crate::{localization, ServerApiProvider};
 
 fn text(app: &AppContext, key: &str) -> String {
     localization::text_for_app(app, key)

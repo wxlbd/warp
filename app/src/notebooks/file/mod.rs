@@ -1,9 +1,10 @@
-use crate::localization;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pathfinder_geometry::vector::vec2f;
+#[cfg(not(target_family = "wasm"))]
+use remote_server::manager::RemoteServerManager;
 use warp_core::ui::icons::ICON_DIMENSIONS;
 use warp_editor::model::CoreEditorModel;
 #[cfg(feature = "local_fs")]
@@ -29,9 +30,6 @@ use warpui::{
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
 };
-
-#[cfg(not(target_family = "wasm"))]
-use remote_server::manager::RemoteServerManager;
 
 use super::context_menu::{show_rich_editor_context_menu, ContextMenuAction, ContextMenuState};
 use super::editor::view::{EditorViewEvent, RichTextEditorConfig, RichTextEditorView};
@@ -62,7 +60,7 @@ use crate::util::openable_file_type::FileTarget;
 use crate::view_components::{MarkdownToggleEvent, MarkdownToggleView};
 use crate::workflows::{WorkflowSource, WorkflowType};
 use crate::workspace::ActiveSession;
-use crate::{cmd_or_ctrl_shift, safe_warn, send_telemetry_from_ctx};
+use crate::{cmd_or_ctrl_shift, localization, safe_warn, send_telemetry_from_ctx};
 
 fn text(app: &AppContext, key: &str) -> String {
     localization::text_for_app(app, key)

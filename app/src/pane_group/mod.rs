@@ -1,4 +1,3 @@
-use crate::localization;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -163,7 +162,7 @@ use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::{
     self, CommandSearchOptions, PaneViewLocator, TabBarLocation, WorkspaceAction,
 };
-use crate::{cmd_or_ctrl_shift, report_if_error, send_telemetry_from_ctx};
+use crate::{cmd_or_ctrl_shift, localization, report_if_error, send_telemetry_from_ctx};
 
 mod child_agent;
 pub mod focus_state;

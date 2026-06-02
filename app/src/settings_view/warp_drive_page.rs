@@ -1,4 +1,3 @@
-use crate::localization;
 use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warp_core::settings::ToggleableSetting as _;
@@ -6,13 +5,12 @@ use warpui::elements::{
     Container, Element, Flex, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::Weight;
-use warpui::id;
 use warpui::keymap::ContextPredicate;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{
-    Action, AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
+    id, Action, AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use super::settings_page::{
@@ -26,6 +24,7 @@ use super::{
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
 use crate::drive::settings::WarpDriveSettings;
+use crate::localization;
 
 #[derive(Debug, Clone)]
 pub enum WarpDriveSettingsPageAction {

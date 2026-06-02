@@ -1,4 +1,3 @@
-use crate::localization;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -36,7 +35,7 @@ use crate::terminal::warpify::settings::{
 use crate::ui_components::blended_colors;
 use crate::view_components::dropdown::{Dropdown, DropdownItem};
 use crate::view_components::{SubmittableTextInput, SubmittableTextInputEvent};
-use crate::{report_if_error, send_telemetry_from_ctx};
+use crate::{localization, report_if_error, send_telemetry_from_ctx};
 
 pub fn init_actions_from_parent_view<T: Action + Clone>(
     app: &mut AppContext,

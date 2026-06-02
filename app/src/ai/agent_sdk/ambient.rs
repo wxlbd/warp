@@ -1,10 +1,7 @@
 //! Commands to interact with ambient agents on Warp's platform.
-use crate::localization;
 use std::io::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
-use warp_localization::replace_placeholders;
-use warp_localization::LocaleId;
 
 use anyhow::{anyhow, Context as _};
 use comfy_table::Cell;
@@ -20,6 +17,7 @@ use warp_cli::task::{
 use warp_cli::{GlobalOptions, SortOrderArg};
 use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
+use warp_localization::{replace_placeholders, LocaleId};
 use warpui::platform::TerminationMode;
 use warpui::r#async::{Spawnable, Timer};
 use warpui::{AppContext, ModelContext, SingletonEntity};
@@ -49,7 +47,7 @@ use crate::server::server_api::ServerApi;
 use crate::terminal::shared_session;
 use crate::util::time_format::format_approx_duration_from_now_utc;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::ServerApiProvider;
+use crate::{localization, ServerApiProvider};
 
 const MAX_LINE_WIDTH: usize = 90;
 const STREAM_RETRY_BACKOFF_STEPS: &[u64] = &[1, 2, 5, 10];
@@ -540,6 +538,7 @@ impl AmbientAgentRunner {
                 conversation_id: args.conversation,
                 initial_snapshot_token: None,
                 snapshot_disabled: None,
+                orchestration_handoff: None,
             };
 
             let should_open = args.open;

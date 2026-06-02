@@ -1,7 +1,5 @@
-use crate::localization;
 use std::collections::HashMap;
 use std::path::Path;
-use warpui::AppContext;
 
 use itertools::Itertools;
 use markdown_parser::{
@@ -16,8 +14,9 @@ use warpui::elements::{
 };
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::UiComponent as _;
-use warpui::{Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
+use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
+use crate::localization;
 use crate::terminal::ssh::util::InteractiveSshCommand;
 use crate::ui_components::buttons::icon_button;
 use crate::ui_components::icons::Icon;

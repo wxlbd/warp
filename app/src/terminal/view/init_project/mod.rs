@@ -1,16 +1,15 @@
-use crate::localization;
+use warpui::elements::{
+    Border, ChildView, Container, CrossAxisAlignment, Empty, Flex, MouseStateHandle, ParentElement,
+    Text,
+};
+use warpui::ui_components::button::ButtonVariant;
+use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
-    elements::{
-        Border, ChildView, Container, CrossAxisAlignment, Empty, Flex, MouseStateHandle,
-        ParentElement, Text,
-    },
-    ui_components::{
-        button::ButtonVariant,
-        components::{UiComponent, UiComponentStyles},
-    },
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
 };
+
+use crate::localization;
 mod lsp_server_selector;
 pub mod model;
 

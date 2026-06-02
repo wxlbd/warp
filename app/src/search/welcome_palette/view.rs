@@ -26,7 +26,6 @@ use super::super::palette_styles as styles;
 use crate::appearance::Appearance;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::drive::CloudObjectTypeAndId;
-use crate::localization;
 use crate::palette::PaletteMode;
 use crate::pane_group::pane::welcome_view::WelcomeViewAction;
 use crate::search::action::search_item::MatchedBinding;
@@ -46,7 +45,6 @@ use crate::search::search_bar::{
     SelectionUpdate,
 };
 use crate::search::QueryFilter;
-use crate::send_telemetry_from_ctx;
 use crate::server::ids::SyncId;
 use crate::server::telemetry::TelemetryEvent;
 use crate::settings::AISettings;
@@ -55,6 +53,7 @@ use crate::themes::theme::WarpTheme;
 use crate::ui_components::icons::Icon;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::WorkspaceAction;
+use crate::{localization, send_telemetry_from_ctx};
 
 /// Position ID for the command palette list.
 const PALETTE_LIST_SAVE_POSITION_ID: &str = "welcome_palette:list";

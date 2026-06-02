@@ -1,4 +1,3 @@
-use crate::localization;
 use markdown_parser::markdown_parser::RUNNABLE_BLOCK_MARKDOWN_LANG;
 use markdown_parser::CodeBlockText;
 use pathfinder_color::ColorU;
@@ -30,10 +29,10 @@ use super::utils::{
 };
 use super::AI_ASSISTANT_SVG_PATH;
 use crate::appearance::Appearance;
-use crate::send_telemetry_from_ctx;
 use crate::server::telemetry::{SaveAsWorkflowModalSource, TelemetryEvent, WarpAIActionType};
 use crate::ui_components::blended_colors;
 use crate::workspaces::user_workspaces::UserWorkspaces;
+use crate::{localization, send_telemetry_from_ctx};
 
 const TRANSCRIPT_POSITION_ID: &str = "ai_assistant::transcript";
 

@@ -1,5 +1,4 @@
 //! Provider command for linking third-party services.
-use crate::localization;
 use comfy_table::Cell;
 use serde::Serialize;
 use warp_cli::provider::{ProviderCommand, ProviderType};
@@ -10,6 +9,7 @@ use warpui::platform::TerminationMode;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use crate::ai::agent_sdk::output::{self, TableFormat};
+use crate::localization;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 /// Handle provider-related CLI commands.

@@ -1,4 +1,3 @@
-use crate::localization;
 use core::fmt::{self, Display};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -45,6 +44,7 @@ use super::warp_drive_page::WarpDriveSettingsPageView;
 use super::warpify_page::WarpifyPageView;
 use super::SettingsSection;
 use crate::appearance::Appearance;
+use crate::localization;
 use crate::settings::CloudPreferencesSettings;
 use crate::themes::theme::Fill;
 use crate::ui_components::blended_colors;

@@ -1,5 +1,6 @@
-use crate::localization;
 use warpui::keymap::{BindingDescription, DescriptionContext, EditableBinding};
+
+use crate::localization;
 mod action;
 mod active_session;
 pub(crate) mod auto_handoff;
@@ -26,15 +27,6 @@ mod toast_stack;
 pub mod util;
 pub mod view;
 
-use crate::channel::{Channel, ChannelState};
-use crate::features::FeatureFlag;
-use crate::palette::PaletteMode;
-use crate::pane_group::TabBarHoverIndex;
-use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
-use crate::settings_view::{self, flags, SettingsSection};
-use crate::tab::uses_vertical_tabs;
-use crate::util::bindings::{self, cmd_or_ctrl_shift, is_binding_pty_compliant, CustomAction};
-use crate::{code, modal, notebooks, tab_configs};
 pub use action::{
     AutoCloudHandoffTrigger, CommandSearchOptions, InitContent, RestoreConversationLayout,
     TabContextMenuAnchor, VerticalTabsPaneContextMenuTarget, WorkspaceAction,
@@ -54,6 +46,16 @@ use warpui::accessibility::AccessibilityVerbosity;
 use warpui::elements::DropTargetData;
 use warpui::keymap::FixedBinding;
 use warpui::AppContext;
+
+use crate::channel::{Channel, ChannelState};
+use crate::features::FeatureFlag;
+use crate::palette::PaletteMode;
+use crate::pane_group::TabBarHoverIndex;
+use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
+use crate::settings_view::{self, flags, SettingsSection};
+use crate::tab::uses_vertical_tabs;
+use crate::util::bindings::{self, cmd_or_ctrl_shift, is_binding_pty_compliant, CustomAction};
+use crate::{code, modal, notebooks, tab_configs};
 
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {

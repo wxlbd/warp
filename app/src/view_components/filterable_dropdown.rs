@@ -1,18 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::appearance::Appearance;
-use crate::editor::EditorView;
-use crate::editor::Event as EditorEvent;
-use crate::editor::PropagateAndNoOpNavigationKeys;
-use crate::editor::SingleLineEditorOptions;
-use crate::editor::TextOptions;
-use crate::localization;
-use crate::localization::LocalizationUpdater;
-use crate::menu::Event as MenuEvent;
-use crate::menu::Menu;
-use crate::menu::MenuItem;
-use crate::menu::MenuVariant;
-use crate::ui_components::icons;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
@@ -33,6 +20,15 @@ use super::dropdown::{
     DropdownAction, DropdownItem, DropdownItemAction, MenuHeaderTextFormatter, DROPDOWN_PADDING,
     TOP_MENU_BAR_HEIGHT, TOP_MENU_BAR_MAX_WIDTH,
 };
+use crate::appearance::Appearance;
+use crate::editor::{
+    EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions,
+    TextOptions,
+};
+use crate::localization;
+use crate::localization::LocalizationUpdater;
+use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuVariant};
+use crate::ui_components::icons;
 
 const EMPTY_DROPDOWN_HEIGHT: f32 = 50.0;
 

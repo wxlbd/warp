@@ -1,5 +1,3 @@
-use crate::localization;
-use crate::localization::LocalizationUpdater;
 use std::collections::HashSet;
 
 use itertools::{Either, Itertools};
@@ -22,6 +20,8 @@ use crate::editor::{
     PlainTextEditorViewAction as EditorAction, PropagateAndNoOpNavigationKeys,
     SingleLineEditorOptions,
 };
+use crate::localization;
+use crate::localization::LocalizationUpdater;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::SearchMixer;
 use crate::search::result_renderer::{QueryResultIndex, QueryResultRenderer};

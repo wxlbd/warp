@@ -1,7 +1,3 @@
-use crate::localization;
-use crate::search::search_bar::{
-    SearchBar, SearchBarEvent, SearchBarPlaceholder, SearchBarState, SearchResultOrdering,
-};
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -39,7 +35,10 @@ use crate::search::command_palette::zero_state::{self, Event as ZeroStateEvent, 
 use crate::search::command_palette::SelectedItems;
 use crate::search::data_source::QueryResult;
 use crate::search::result_renderer::QueryResultRenderer;
-use crate::search::search_bar::SelectionUpdate;
+use crate::search::search_bar::{
+    SearchBar, SearchBarEvent, SearchBarPlaceholder, SearchBarState, SearchResultOrdering,
+    SelectionUpdate,
+};
 use crate::search::QueryFilter;
 use crate::server::ids::SyncId;
 use crate::server::telemetry::{LaunchConfigUiLocation, TelemetryEvent};
@@ -49,7 +48,7 @@ use crate::terminal::keys_settings::KeysSettings;
 use crate::themes::theme::WarpTheme;
 use crate::view_components::DismissibleToast;
 use crate::workspace::{active_terminal_in_window, ForkedConversationDestination, WorkspaceAction};
-use crate::{send_telemetry_from_ctx, ToastStack};
+use crate::{localization, send_telemetry_from_ctx, ToastStack};
 
 lazy_static! {
     /// Set of hardcoded action names that we want to show in the command palette zero state.

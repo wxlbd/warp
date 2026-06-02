@@ -1,4 +1,3 @@
-use crate::localization;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +10,7 @@ use super::tab_config::{
 };
 use crate::app_state::{BranchSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot};
 use crate::launch_configs::launch_config::SplitDirection;
+use crate::localization;
 use crate::terminal::cli_agent::CLIAgent;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::ui_components::icons::Icon;

@@ -1,4 +1,3 @@
-use crate::localization;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
@@ -29,6 +28,7 @@ use crate::ai::blocklist::inline_action::inline_action_header::{
 };
 use crate::ai::blocklist::inline_action::inline_action_icons::cancelled_icon;
 use crate::ai::blocklist::TextLocation;
+use crate::localization;
 use crate::terminal::find::TerminalFindModel;
 use crate::terminal::view::RichContentLink;
 use crate::terminal::ShellLaunchData;

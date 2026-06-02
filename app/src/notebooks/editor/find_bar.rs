@@ -1,10 +1,3 @@
-use crate::{
-    appearance::Appearance,
-    editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions},
-    localization,
-    ui_components::icons::Icon,
-    view_components::find::{CASE_SENSITIVE_LABEL, FIND_BAR_WIDTH, REGEX_TOGGLE_LABEL},
-};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -31,6 +24,11 @@ use warpui::{
 
 use super::model::NotebooksEditorModel;
 use super::view::{EditorViewEvent, RichTextEditorView};
+use crate::appearance::Appearance;
+use crate::editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions};
+use crate::localization;
+use crate::ui_components::icons::Icon;
+use crate::view_components::find::{CASE_SENSITIVE_LABEL, FIND_BAR_WIDTH, REGEX_TOGGLE_LABEL};
 
 /// View for the find bar within a notebook.
 pub struct FindBar {

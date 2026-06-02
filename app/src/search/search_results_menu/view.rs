@@ -1,4 +1,3 @@
-use crate::localization;
 use std::marker::PhantomData;
 use std::ops::Range;
 
@@ -15,6 +14,7 @@ use warpui::{
 
 use super::styles::{ESTIMATED_RESULT_HEIGHT, MAX_DISPLAYED_RESULT_COUNT};
 use crate::appearance::Appearance;
+use crate::localization;
 use crate::search::mixer::SearchMixer;
 use crate::search::search_bar::{
     CreateQueryResultRendererFn, SearchBar, SearchBarEvent, SearchBarState, SearchResultOrdering,

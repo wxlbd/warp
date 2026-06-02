@@ -1,33 +1,8 @@
-use crate::settings::active_theme_kind;
-use crate::settings::app_icon::AppIcon;
-use crate::settings::app_icon::AppIconSettings;
-use crate::settings::respect_system_theme;
-use crate::settings::AIFontName;
-use crate::settings::AppEditorSettings;
-use crate::settings::AppLanguage;
-use crate::settings::AppLanguageSetting;
-use crate::settings::CursorBlink;
-use crate::settings::CursorBlinkEnabled;
-use crate::settings::EnforceMinimumContrast;
-use crate::settings::FocusPaneOnHover;
-use crate::settings::FontSettings;
-use crate::settings::FontSettingsChangedEvent;
-use crate::settings::InputBoxType;
-use crate::settings::InputModeSettings;
-use crate::settings::InputModeState;
-use crate::settings::LanguageSettings;
-use crate::settings::MonospaceFontName;
-use crate::settings::PaneSettings;
-use crate::settings::ShouldDimInactivePanes;
-use crate::settings::ThemeSettings;
-use crate::settings::UseSystemTheme;
-use crate::settings::DEFAULT_MONOSPACE_FONT_NAME;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use warpui::keymap::BindingDescription;
 
 use ::settings::{Setting, SettingSection, ToggleableSetting};
 use enum_iterator::all;
@@ -40,7 +15,7 @@ use warpui::elements::{
     DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{FamilyId, FontInfo, Weight};
-use warpui::keymap::{ContextPredicate, FixedBinding};
+use warpui::keymap::{BindingDescription, ContextPredicate, FixedBinding};
 use warpui::platform::{Cursor, FilePickerConfiguration, GraphicsBackend, SystemTheme};
 use warpui::rendering::ThinStrokes;
 use warpui::ui_components::button::ButtonVariant;
@@ -78,14 +53,17 @@ use crate::editor::{
 };
 use crate::features::FeatureFlag;
 use crate::gpu_state::{GPUState, GPUStateEvent};
-use crate::localization;
 use crate::prompt::editor_modal::OpenSource as PromptEditorOpenSource;
 use crate::server::telemetry::{InputUXChangeOrigin, TelemetryEvent};
-use crate::settings::CursorDisplayType;
-use crate::settings::GPUSettings;
-use crate::settings::InputSettings;
-use crate::settings::InputSettingsChangedEvent;
-use crate::settings::UseThinStrokes;
+use crate::settings::app_icon::{AppIcon, AppIconSettings};
+use crate::settings::{
+    active_theme_kind, respect_system_theme, AIFontName, AppEditorSettings, AppLanguage,
+    AppLanguageSetting, CursorBlink, CursorBlinkEnabled, CursorDisplayType, EnforceMinimumContrast,
+    FocusPaneOnHover, FontSettings, FontSettingsChangedEvent, GPUSettings, InputBoxType,
+    InputModeSettings, InputModeState, InputSettings, InputSettingsChangedEvent, LanguageSettings,
+    MonospaceFontName, PaneSettings, ShouldDimInactivePanes, ThemeSettings, UseSystemTheme,
+    UseThinStrokes, DEFAULT_MONOSPACE_FONT_NAME,
+};
 use crate::terminal::block_list_viewport::InputMode;
 use crate::terminal::blockgrid_element::BlockGridElement;
 use crate::terminal::ligature_settings::{LigatureRenderingEnabled, LigatureSettings};
@@ -118,7 +96,7 @@ use crate::workspace::tab_settings::{
     WorkspaceDecorationVisibility,
 };
 use crate::workspace::WorkspaceAction;
-use crate::{report_error, report_if_error, send_telemetry_from_ctx, themes};
+use crate::{localization, report_error, report_if_error, send_telemetry_from_ctx, themes};
 
 const FONT_SIZE_INPUT_BOX_WIDTH: f32 = 80.;
 const NOTEBOOK_FONT_SIZE_INPUT_BOX_WIDTH: f32 = 50.;

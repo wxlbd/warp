@@ -1,4 +1,3 @@
-use crate::localization;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -57,7 +56,7 @@ use crate::view_components::ToastFlavor;
 use crate::workspaces::update_manager::TeamUpdateManager;
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use crate::workspaces::workspace::{CustomerType, Workspace, WorkspaceUid};
-use crate::{send_telemetry_from_ctx, WorkspaceAction};
+use crate::{localization, send_telemetry_from_ctx, WorkspaceAction};
 
 const MANAGED_AUTO_RELOAD_HEADER: &str = "Auto-reload is enabled";
 

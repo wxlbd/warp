@@ -1,7 +1,5 @@
-use crate::localization;
 use std::fs;
 use std::io::{self, IsTerminal as _, Read};
-use warp_localization::LocaleId;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -18,6 +16,7 @@ use warp_cli::GlobalOptions;
 use warp_core::features::FeatureFlag;
 use warp_graphql::managed_secrets::{ManagedSecret, ManagedSecretType};
 use warp_graphql::object::SpaceType;
+use warp_localization::LocaleId;
 use warp_managed_secrets::client::SecretOwner;
 use warp_managed_secrets::{ManagedSecretManager, ManagedSecretValue};
 use warpui::platform::TerminationMode;
@@ -26,6 +25,7 @@ use warpui::{AppContext, SingletonEntity as _};
 use super::output::{self, TableFormat};
 use crate::auth::UserUid;
 use crate::cloud_object::Owner;
+use crate::localization;
 use crate::server::ids::ServerId;
 use crate::util::time_format::format_approx_duration_from_now_utc;
 

@@ -1,4 +1,3 @@
-use crate::localization;
 use std::default::Default;
 use std::fmt;
 use std::path::PathBuf;
@@ -26,7 +25,7 @@ use warpui::{
 use crate::appearance::{Appearance, AppearanceManager};
 use crate::editor::{EditorView, Event as EditorEvent};
 use crate::themes::theme::{InMemoryThemeOptions, ThemeKind};
-use crate::user_config;
+use crate::{localization, user_config};
 #[cfg(feature = "local_fs")]
 use crate::{
     send_telemetry_from_ctx, server::telemetry::TelemetryEvent, themes::theme::CustomTheme,

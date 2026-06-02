@@ -1,4 +1,3 @@
-use crate::localization;
 use std::fmt::Debug;
 use std::path::PathBuf;
 
@@ -10,6 +9,7 @@ use warpui::fonts::{Properties, Weight};
 use warpui::{AppContext, Element, SingletonEntity};
 
 use crate::appearance::Appearance;
+use crate::localization;
 use crate::search::command_palette::mixer::CommandPaletteItemAction;
 use crate::search::command_palette::styles;
 use crate::search::files::icon::icon_from_file_path;

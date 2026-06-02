@@ -1,4 +1,3 @@
-use crate::localization;
 use std::path::{Path, PathBuf};
 
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
@@ -48,7 +47,7 @@ use crate::view_components::{
 };
 use crate::workspace::WorkspaceAction;
 use crate::workspaces::user_workspaces::UserWorkspacesEvent;
-use crate::{Appearance, TemplatableMCPServerManager, UserWorkspaces};
+use crate::{localization, Appearance, TemplatableMCPServerManager, UserWorkspaces};
 
 const MODEL_MENU_WIDTH: f32 = 250.;
 

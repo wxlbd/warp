@@ -1,6 +1,4 @@
-use crate::localization;
 use std::collections::HashSet;
-use warp_localization::LocaleId;
 
 use comfy_table::Cell;
 use cynic::QueryBuilder;
@@ -16,6 +14,7 @@ use warp_graphql::queries::list_warp_dev_images::{
     ListWarpDevImages, ListWarpDevImagesResult, ListWarpDevImagesVariables,
 };
 use warp_graphql::queries::user_repo_auth_status::UserRepoAuthStatusEnum;
+use warp_localization::LocaleId;
 use warpui::r#async::FutureExt;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
@@ -36,7 +35,7 @@ use crate::server::ids::{ClientId, ServerId, SyncId};
 use crate::server::server_api::ServerApiProvider;
 use crate::util::time_format::format_approx_duration_from_now_utc;
 use crate::workspaces::user_profiles::UserProfiles;
-use crate::CloudObjectTypeAndId;
+use crate::{localization, CloudObjectTypeAndId};
 
 const WARP_DEV_ENVIRONMENTS_REPO: &str = "https://github.com/warpdotdev/warp-dev-environments";
 

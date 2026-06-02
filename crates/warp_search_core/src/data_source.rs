@@ -1,4 +1,3 @@
-use crate::localization;
 use std::any::Any;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,6 +16,7 @@ use warpui_core::{Action, AppContext, Element, Entity, ModelHandle};
 use super::item::SearchItem;
 use super::mixer::{AsyncDataSource, BoxFuture, DataSourceRunErrorWrapper};
 use crate::item::IconLocation;
+use crate::localization;
 use crate::mixer::{DataSourceRunError, SyncDataSource};
 use crate::result_renderer::ItemHighlightState;
 

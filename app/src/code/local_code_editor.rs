@@ -1,15 +1,3 @@
-use crate::{
-    code::{
-        buffer_location::LocalOrRemotePath as BufferFileLocation,
-        editor::model::HoverableLink,
-        footer::{CodeFooterView, CodeFooterViewEvent},
-        global_buffer_model::{BufferState, GlobalBufferModel},
-        SaveOutcome, ShowFindReferencesCardProvider,
-    },
-    localization,
-    settings::AISettings,
-    terminal::TerminalView,
-};
 /// This module contains a model that can be used for loading and saving text files
 /// and displaying them in a code editor.
 /// It also handles applying an optional diff to the file content that will be applied
@@ -34,6 +22,7 @@ use num_traits::SaturatingSub;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
+use remote_server::manager::RemoteServerManager;
 #[cfg(feature = "local_fs")]
 use repo_metadata::repositories::DetectedRepositories;
 use string_offset::CharOffset;
@@ -69,13 +58,18 @@ use warpui::{
     ViewHandle, WindowId,
 };
 
-use remote_server::manager::RemoteServerManager;
-
 use crate::ai::persisted_workspace::{PersistedWorkspace, PersistedWorkspaceEvent};
+use crate::code::buffer_location::LocalOrRemotePath as BufferFileLocation;
+use crate::code::editor::model::HoverableLink;
 use crate::code::editor::EditorReviewComment;
-use crate::code::global_buffer_model::GlobalBufferModelEvent;
+use crate::code::footer::{CodeFooterView, CodeFooterViewEvent};
+use crate::code::global_buffer_model::{BufferState, GlobalBufferModel, GlobalBufferModelEvent};
+use crate::code::{SaveOutcome, ShowFindReferencesCardProvider};
 use crate::code_review::comments::CommentId;
+use crate::localization;
 use crate::menu::{Event, Menu, MenuItem, MenuItemFields};
+use crate::settings::AISettings;
+use crate::terminal::TerminalView;
 use crate::workspace::WorkspaceAction;
 
 const DROP_SHADOW_COLOR: ColorU = ColorU {
