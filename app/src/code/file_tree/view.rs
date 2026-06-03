@@ -532,6 +532,7 @@ impl FileTreeView {
             }
             RepoMetadataEvent::FileTreeEntryUpdated {
                 id: RepositoryIdentifier::Local(std_path),
+                ..
             } => {
                 // Find root directories whose backing model entry matches this path.
                 let root_paths: Vec<StandardizedPath> = self
@@ -592,6 +593,7 @@ impl FileTreeView {
             }
             RepoMetadataEvent::FileTreeEntryUpdated {
                 id: RepositoryIdentifier::Remote(remote_id),
+                ..
             } => {
                 let repo_path = remote_id.path.clone();
                 let id = RepositoryIdentifier::Remote(remote_id.clone());

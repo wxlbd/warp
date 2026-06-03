@@ -72,6 +72,7 @@ use warp_core::ui::theme::Fill;
 use warp_core::ui::Icon;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_editor::editor::NavigationKey;
+use warp_server_client::auth::AuthEvent;
 use warp_util::path::{user_friendly_path, LineAndColumnArg};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use warp_util::standardized_path::StandardizedPath;
@@ -309,8 +310,7 @@ use crate::server::cloud_objects::update_manager::{
 use crate::server::ids::{ObjectUid, ServerId, SyncId};
 use crate::server::network_log_pane_manager::NetworkLogPaneManager;
 use crate::server::server_api::ai::AIClient;
-use crate::server::server_api::auth::AuthClient;
-use crate::server::server_api::{ServerApi, ServerApiEvent, ServerApiProvider, ServerTime};
+use crate::server::server_api::{ServerApi, ServerApiProvider, ServerTime};
 use crate::server::telemetry::{
     AddTabWithShellSource, AnonymousUserSignupEntrypoint, CloseTarget, EnvVarTelemetryMetadata,
     FileTreeSource, KnowledgePaneEntrypoint, LaunchConfigUiLocation,
@@ -2538,7 +2538,7 @@ impl Workspace {
     fn observe_server_api(ctx: &mut ViewContext<Self>) {
         let server_api_events = ServerApiProvider::handle(ctx);
         ctx.subscribe_to_model(&server_api_events, |me, _, event, ctx| {
-            if let ServerApiEvent::StagingAccessBlocked = event {
+            if let AuthEvent::StagingAccessBlocked = event {
                 if ChannelState::uses_staging_server() && me.shown_staging_banner_count < 5 {
                     me.shown_staging_banner_count += 1;
                     me.toast_stack.update(ctx, |toast_stack, ctx| {
@@ -3161,7 +3161,8 @@ impl Workspace {
                 ctx.notify();
             }
             AISettingsChangedEvent::IsActiveAIEnabled { .. }
-            | AISettingsChangedEvent::ThinkingDisplayMode { .. } => {
+            | AISettingsChangedEvent::ThinkingDisplayMode { .. }
+            | AISettingsChangedEvent::PromptSubmissionMode { .. } => {
                 ctx.notify();
             }
             AISettingsChangedEvent::ShowAgentNotifications { .. } => {
@@ -22020,6 +22021,15 @@ impl Workspace {
             }
             crate::settings::ThinkingDisplayMode::NeverShow => {
                 context.set.insert(flags::THINKING_DISPLAY_NEVER_SHOW);
+            }
+        }
+
+        match ai_settings.default_prompt_submission_mode {
+            crate::settings::PromptSubmissionMode::Interrupt => {
+                context.set.insert(flags::PROMPT_SUBMISSION_INTERRUPT);
+            }
+            crate::settings::PromptSubmissionMode::Queue => {
+                context.set.insert(flags::PROMPT_SUBMISSION_QUEUE);
             }
         }
 

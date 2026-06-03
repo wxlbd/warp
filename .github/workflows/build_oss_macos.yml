@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Show toolchain versions
         run: |
@@ -44,13 +46,40 @@ jobs:
           protoc --version
         shell: bash
 
+      - name: Prepare versioned release tag
+        id: release_version
+        run: |
+          set -euo pipefail
+
+          release_channel="oss"
+          date_formatted="$(date +'%Y.%m.%d.%H.%M')"
+          release_base="v0.${date_formatted}.${release_channel}"
+
+          git fetch --tags origin
+          latest_tag="$(git tag --list "${release_base}_*" | sort -r --version-sort | head -n 1)"
+          if [[ -n "$latest_tag" ]]; then
+            suffix="${latest_tag: -2}"
+            suffix=$((10#$suffix + 1))
+            suffix="$(printf '%02d' "$suffix")"
+          else
+            suffix="00"
+          fi
+
+          release_tag="${release_base}_${suffix}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_name=WarpOss macOS $release_tag" >> "$GITHUB_OUTPUT"
+        shell: bash
+
       - name: Build unsigned macOS OSS DMG
         id: bundle
+        env:
+          RELEASE_TAG: ${{ steps.release_version.outputs.release_tag }}
         run: |
           dmg_suffix="${RUNNER_ARCH}-${GITHUB_SHA::7}"
 
           ./script/bundle \
             --channel oss \
+            --release-tag "$RELEASE_TAG" \
             --nosign \
             --nouniversal \
             --dmg-name-suffix "$dmg_suffix"
@@ -78,8 +107,8 @@ jobs:
       - name: Publish DMG to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: oss-macos-latest
-          RELEASE_NAME: WarpOss macOS latest
+          RELEASE_TAG: ${{ steps.release_version.outputs.release_tag }}
+          RELEASE_NAME: ${{ steps.release_version.outputs.release_name }}
           RELEASE_DMG_PATH: ${{ steps.bundle.outputs.release_dmg_path }}
         run: |
           set -euo pipefail
@@ -87,13 +116,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
-          git push --force origin "refs/tags/$RELEASE_TAG"
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
 
           release_notes="${RUNNER_TEMP}/oss-macos-release-notes.md"
           cat > "$release_notes" <<EOF
           Automatically published WarpOss macOS DMG.
 
+          Version: ${RELEASE_TAG}
           Branch: ${GITHUB_REF_NAME}
           Commit: ${GITHUB_SHA}
           Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
