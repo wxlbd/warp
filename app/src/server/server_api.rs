@@ -522,9 +522,9 @@ impl ServerApi {
     /// TODO(isaiah): implement retries on IAP challenge failures so the
     /// triggering request transparently succeeds after the refresh
     /// completes instead of bubbling up a one-off error to the caller.
-    fn check_for_iap_challenge(&self, response: &http_client::Response) -> bool {
+    fn check_for_iap_challenge(&self, response: &http_client::Response) {
         if self.iap_state.is_none() {
-            return false;
+            return;
         }
         if http_client::iap::is_iap_challenge(response.status(), response.headers()) {
             log::warn!(
@@ -534,9 +534,6 @@ impl ServerApi {
             if let Err(err) = self.event_sender.try_send(AuthEvent::IapChallengeReceived) {
                 log::warn!("Failed to enqueue IapChallengeReceived event: {err}");
             }
-            true
-        } else {
-            false
         }
     }
 
@@ -579,6 +576,24 @@ impl ServerApi {
             }
         }
     }
+
+    /// Inspects a websocket *handshake* connect error for an IAP challenge and
+    /// enqueues an `IapChallengeReceived` event if detected.
+    #[cfg(not(target_family = "wasm"))]
+    fn report_ws_iap_challenge(&self, err: &anyhow::Error) {
+        if self.iap_state.is_none() {
+            return;
+        }
+        if super::iap::ws_connect_is_iap_challenge(err) {
+            log::warn!("Received IAP challenge on websocket handshake; notifying IapManager");
+            if let Err(err) = self.event_sender.try_send(AuthEvent::IapChallengeReceived) {
+                log::warn!("Failed to enqueue IapChallengeReceived: {err}");
+            }
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn report_ws_iap_challenge(&self, _err: &anyhow::Error) {}
 
     /// Returns ambient agent headers to attach to requests.
     async fn ambient_agent_headers(&self) -> Result<Vec<(&'static str, String)>> {
@@ -731,12 +746,11 @@ impl ServerApi {
         Ok(self.wrap_eventsource_with_iap_detection(request.eventsource()))
     }
 
-    /// Opens an SSE stream against the ancestor-scoped endpoint that serves
-    /// every direct child of the supplied parent run. Mirrors
-    /// [`Self::stream_agent_events`] in transport, auth, and header handling.
+    /// Opens an SSE stream against the ancestor-scoped agent event endpoint.
     pub async fn stream_agent_events_for_ancestor(
         &self,
         ancestor_run_id: &str,
+        include_self: bool,
         since_sequence: i64,
     ) -> Result<http_client::EventSourceStream> {
         debug_assert!(
@@ -748,8 +762,13 @@ impl ServerApi {
             .await
             .context("Failed to get access token for SSE stream")?;
 
+        let include_self_param = if include_self {
+            "&include_self=true"
+        } else {
+            ""
+        };
         let url = format!(
-            "{}/api/v1/agent/events/stream?ancestor_run_id={}&since={since_sequence}",
+            "{}/api/v1/agent/events/stream?ancestor_run_id={}&since={since_sequence}{include_self_param}",
             ChannelState::rtc_http_url(),
             urlencoding::encode(ancestor_run_id),
         );
@@ -763,7 +782,7 @@ impl ServerApi {
             request = request.header(name, value);
         }
 
-        Ok(request.eventsource())
+        Ok(self.wrap_eventsource_with_iap_detection(request.eventsource()))
     }
 
     pub async fn stream_agent_events_for_task(
@@ -797,7 +816,7 @@ impl ServerApi {
             request = request.header(name, value);
         }
 
-        Ok(request.eventsource())
+        Ok(self.wrap_eventsource_with_iap_detection(request.eventsource()))
     }
 
     /// Sends a POST request to a public API endpoint and returns the raw response on success.

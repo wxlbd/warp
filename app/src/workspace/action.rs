@@ -186,6 +186,15 @@ pub enum WorkspaceAction {
     },
     /// Removes the tab at the given index from its current group.
     RemoveTabFromGroup(usize),
+    /// Selects every tab between the active tab and the shift-clicked row (inclusive).
+    ShiftSelectTabRange {
+        locator: PaneViewLocator,
+    },
+    /// Toggles whether the tab at `locator` is part of the active multi-selection.
+    /// Dispatched on cmd-click of a vertical tab row.
+    ToggleTabMultiSelection {
+        locator: PaneViewLocator,
+    },
     ToggleTabGroupRightClickMenu {
         group_id: TabGroupId,
         anchor: TabContextMenuAnchor,
@@ -621,6 +630,7 @@ pub enum WorkspaceAction {
     NavigateNextPaneOrPanel,
     ToggleProjectExplorer,
     ToggleGlobalSearch,
+    ToggleHiddenFiles,
     OpenGlobalSearch,
     ToggleConversationListView,
     /// Open the Build Plan Migration Modal (for debugging)
@@ -1011,6 +1021,8 @@ impl WorkspaceAction {
             | OpenMCPServerCollection
             | FocusTerminalViewInWorkspace { .. }
             | FocusPane(..)
+            | ShiftSelectTabRange { .. }
+            | ToggleTabMultiSelection { .. }
             | StartNewConversation { .. }
             | UndoRevertInCodeReviewPane { .. }
             | JumpToLatestToast
@@ -1018,6 +1030,7 @@ impl WorkspaceAction {
             | NavigateNextPaneOrPanel
             | ToggleProjectExplorer
             | ToggleGlobalSearch
+            | ToggleHiddenFiles
             | OpenGlobalSearch
             | ToggleConversationListView
             | ToggleNotificationMailbox { .. }

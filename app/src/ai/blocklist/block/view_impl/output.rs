@@ -187,11 +187,8 @@ pub(crate) struct Props<'a> {
     pub(super) thinking_display_mode: crate::settings::ThinkingDisplayMode,
     pub(super) conversation_has_imported_comments: bool,
     pub(super) ask_user_question_view: Option<&'a ViewHandle<AskUserQuestionView>>,
-    /// `true` when this block belongs to a cloud agent pane that is still in its setup
-    /// phase (running environment startup commands before the first agent turn). Used to
-    /// hide the response footer (thumbs up/down, credit usage, fork) until the agent has
-    /// produced real output — otherwise the footer renders awkwardly above the still-
-    /// pending optimistic user prompt.
+    /// `true` when this block belongs to a cloud agent pane that is still in its setup phase
+    /// (running environment startup commands before the first agent turn).
     pub(super) is_cloud_agent_pre_first_exchange: bool,
 }
 
@@ -787,7 +784,7 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                 },
                             id,
                             ..
-                        }) if FeatureFlag::OrchestrationV2.is_enabled() => {
+                        }) => {
                             should_render_footer = false;
                             should_render_suggestions = false;
                             output_items.add_child(orchestration::render_start_agent(
@@ -804,7 +801,7 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                             action: AIAgentActionType::RunAgents(_req),
                             id,
                             ..
-                        }) if FeatureFlag::RunAgentsTool.is_enabled() => {
+                        }) => {
                             // Embed the per-action `RunAgentsCardView`
                             // via `ChildView`. The view renders a
                             // "Configuring agents..." placeholder while
@@ -825,7 +822,7 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                 },
                             id,
                             ..
-                        }) if FeatureFlag::OrchestrationV2.is_enabled() => {
+                        }) => {
                             should_render_footer = false;
                             should_render_suggestions = false;
                             output_items.add_child(orchestration::render_send_message(
@@ -915,9 +912,7 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                 );
                             }
                         }
-                        AIAgentOutputMessageType::MessagesReceivedFromAgents { messages }
-                            if FeatureFlag::OrchestrationV2.is_enabled() =>
-                        {
+                        AIAgentOutputMessageType::MessagesReceivedFromAgents { messages } => {
                             output_items.add_child(
                                 orchestration::render_messages_received_from_agents(
                                     messages, props, app,
