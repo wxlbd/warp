@@ -98,6 +98,7 @@ fn conversation_status_text(app: &AppContext, status: &ConversationStatus) -> St
         ConversationStatus::Error => "conversation_details.status.error",
         ConversationStatus::Cancelled => "conversation_details.status.cancelled",
         ConversationStatus::Blocked { .. } => "conversation_details.status.blocked",
+        ConversationStatus::WaitingForEvents => "conversation_details.status.waiting_for_events",
     };
     conversation_details_text(app, key)
 }
@@ -994,6 +995,7 @@ impl ConversationDetailsPanel {
                     summarize_after_fork: false,
                     summarization_prompt: None,
                     initial_prompt: None,
+                    initial_attachments: vec![],
                     destination: ForkedConversationDestination::NewTab,
                 });
             }

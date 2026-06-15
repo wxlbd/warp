@@ -259,7 +259,7 @@ impl View for AgentViewEntryBlock {
             // If the agent_view_block's conversation no longer exists,
             // we assume that it has been deleted.
             return render_deleted_state(
-                self.origin,
+                self.origin.clone(),
                 self.cached_title.clone(),
                 appearance,
                 are_block_dividers_enabled,
@@ -300,7 +300,7 @@ impl View for AgentViewEntryBlock {
             Some(localization::text_for_app(app, "agent.view_block.restored"))
         } else if !self.is_new
             && !matches!(
-                self.origin,
+                &self.origin,
                 AgentViewEntryOrigin::LongRunningCommand
                     | AgentViewEntryOrigin::AgentRequestedNewConversation
             )
@@ -386,7 +386,7 @@ impl View for AgentViewEntryBlock {
             .with_child(Container::new(fork_button).with_margin_left(8.).finish())
             .with_child(open_conversation_button);
 
-        let origin = self.origin;
+        let origin = self.origin.clone();
         let entry_block_id = self.view_id;
         let entry_block_position_id = get_agent_view_entry_block_position_id(entry_block_id);
         SavePosition::new(
@@ -397,7 +397,7 @@ impl View for AgentViewEntryBlock {
                     blended_colors::fg_overlay_1(appearance.theme())
                 };
                 render_block_container(
-                    origin,
+                    origin.clone(),
                     row.finish(),
                     background.into(),
                     appearance,

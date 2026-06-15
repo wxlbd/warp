@@ -1255,7 +1255,7 @@ fn should_render_stopped_output(props: Props, app: &AppContext) -> bool {
 
     let status = props.model.status(app);
     let cancellation_reason = status.cancellation_reason().cloned();
-    if cancellation_reason.is_some_and(|reason| reason.is_follow_up_for_same_conversation()) {
+    if cancellation_reason.is_some_and(|reason| reason.should_preserve_in_progress_status()) {
         return false;
     }
 
@@ -1799,27 +1799,29 @@ fn render_read_skill(
     // Renders the 'open skill' button for known, non-bundled skills.
     if let Some(skill) = skill {
         if !skill.is_bundled() {
-            let source = CodeSource::Skill {
-                reference: skill_reference.clone(),
-                location: skill.path.clone(),
-                origin: SkillOpenOrigin::ReadSkill,
-            };
+            if let Some(button_handle) = props.state_handles.skill_button_handles.get(id).cloned() {
+                let source = CodeSource::Skill {
+                    reference: skill_reference.clone(),
+                    location: skill.path.clone(),
+                    origin: SkillOpenOrigin::ReadSkill,
+                };
 
-            let skill_icon_override = icon_override_for_skill_name(&skill.name);
-            let open_button = render_skill_button(
-                &crate::localization::text_for_app(app, "agent.output.skill.open"),
-                props.state_handles.open_skill_button_handle.clone(),
-                appearance,
-                skill.provider,
-                skill_icon_override,
-                move |ctx| {
-                    ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
-                        source: source.clone(),
-                    });
-                },
-            );
+                let skill_icon_override = icon_override_for_skill_name(&skill.name);
+                let open_button = render_skill_button(
+                    &crate::localization::text_for_app(app, "agent.output.skill.open"),
+                    button_handle,
+                    appearance,
+                    skill.provider,
+                    skill_icon_override,
+                    move |ctx| {
+                        ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
+                            source: source.clone(),
+                        });
+                    },
+                );
 
-            renderable_action = renderable_action.with_action_button(open_button);
+                renderable_action = renderable_action.with_action_button(open_button);
+            }
         }
     }
 
@@ -1904,28 +1906,30 @@ fn render_read_files(
 
     // Renders the 'open skill' button if all files belong to the same skill directory.
     if let Some(skill) = parsed_skill {
-        let reference = SkillManager::handle(app)
-            .as_ref(app)
-            .reference_for_skill_path(&skill.path);
-        let source = CodeSource::Skill {
-            reference,
-            location: skill.path.clone(),
-            origin: SkillOpenOrigin::ReadFiles,
-        };
-        let skill_icon_override = icon_override_for_skill_name(&skill.name);
-        let open_button = render_skill_button(
-            &format!("/{}", skill.name),
-            props.state_handles.read_from_skill_button_handle.clone(),
-            appearance,
-            skill.provider,
-            skill_icon_override,
-            move |ctx| {
-                ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
-                    source: source.clone(),
-                });
-            },
-        );
-        renderable_action = renderable_action.with_action_button(open_button);
+        if let Some(button_handle) = props.state_handles.skill_button_handles.get(id).cloned() {
+            let reference = SkillManager::handle(app)
+                .as_ref(app)
+                .reference_for_skill_path(&skill.path);
+            let source = CodeSource::Skill {
+                reference,
+                location: skill.path.clone(),
+                origin: SkillOpenOrigin::ReadFiles,
+            };
+            let skill_icon_override = icon_override_for_skill_name(&skill.name);
+            let open_button = render_skill_button(
+                &format!("/{}", skill.name),
+                button_handle,
+                appearance,
+                skill.provider,
+                skill_icon_override,
+                move |ctx| {
+                    ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
+                        source: source.clone(),
+                    });
+                },
+            );
+            renderable_action = renderable_action.with_action_button(open_button);
+        }
     }
 
     renderable_action.render(app).finish()

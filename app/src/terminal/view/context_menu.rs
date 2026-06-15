@@ -467,7 +467,6 @@ impl TerminalView {
                         })
                     })
                     .unwrap_or_default(),
-                ctx,
             );
             menu_items.push(
                 MenuItemFields::new(fork_label)

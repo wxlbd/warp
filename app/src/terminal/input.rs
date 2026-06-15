@@ -1,4 +1,3 @@
-use crate::localization;
 mod agent;
 pub mod buffer_model;
 mod classic;
@@ -145,7 +144,9 @@ use super::view::{
 use super::warpify::SubshellSource;
 use super::{prompt, History, HistoryEntry, SizeInfo, TerminalModel, UpArrowHistoryConfig};
 use crate::ai::agent::conversation::AIConversationId;
-use crate::ai::agent::{AIAgentContext, AIAgentExchangeId, CancellationReason, EntrypointType};
+use crate::ai::agent::{
+    AIAgentContext, AIAgentExchangeId, CancellationReason, EntrypointType, ImageContext,
+};
 use crate::ai::agent_conversations_model::{
     AgentConversationNavigationSubject, AgentConversationsModel,
 };
@@ -169,16 +170,14 @@ use crate::ai::blocklist::handoff::touched_repos::{
 use crate::ai::blocklist::handoff::{HandoffLaunchAttachments, PendingCloudLaunch};
 use crate::ai::blocklist::prompt::prompt_alert::{PromptAlertEvent, PromptAlertView};
 use crate::ai::blocklist::telemetry_banner::should_collect_ai_ugc_telemetry;
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-use crate::ai::blocklist::PendingAttachment;
 use crate::ai::blocklist::{
     ai_brand_color, ai_indicator_height, render_ai_agent_mode_icon, render_ai_follow_up_icon,
     AttachmentType, BlocklistAIActionModel, BlocklistAIContextEvent, BlocklistAIContextModel,
     BlocklistAIController, BlocklistAIControllerEvent, BlocklistAIHistoryEvent,
     BlocklistAIHistoryModel, BlocklistAIInputEvent, BlocklistAIInputModel, InputConfig, InputType,
-    InputTypeAutoDetectionSource, QueuedQuery, QueuedQueryModel, QueuedQueryOrigin,
-    SlashCommandRequest, BLOCK_CONTEXT_ATTACHMENT_REGEX, DIFF_HUNK_ATTACHMENT_REGEX,
-    DRIVE_OBJECT_ATTACHMENT_REGEX,
+    InputTypeAutoDetectionSource, PendingAttachment, PendingFile, QueuedQuery, QueuedQueryEvent,
+    QueuedQueryId, QueuedQueryModel, QueuedQueryOrigin, SlashCommandRequest,
+    BLOCK_CONTEXT_ATTACHMENT_REGEX, DIFF_HUNK_ATTACHMENT_REGEX, DRIVE_OBJECT_ATTACHMENT_REGEX,
 };
 use crate::ai::cloud_agent_settings::CloudAgentSettings;
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
@@ -211,7 +210,7 @@ use crate::code::editor_management::CodeSource;
 use crate::code_review::diff_state::DiffMode;
 use crate::completer::SessionContext;
 use crate::context_chips::display::{PromptDisplay, PromptDisplayEvent};
-use crate::context_chips::display_chip::DisplayChipConfig;
+use crate::context_chips::display_chip::{DisplayChipConfig, PromptChipShellCommand};
 use crate::context_chips::prompt_type::PromptType;
 use crate::context_chips::spacing;
 use crate::editor::{
@@ -254,8 +253,8 @@ use crate::server::server_api::ServerApi;
 use crate::server::telemetry::{
     AICommandSearchEntrypoint, AgentModeAutoDetectionFalsePositivePayload,
     AgentModeAutoDetectionSettingOrigin, AnonymousUserSignupEntrypoint, CommandXRayTrigger,
-    EnvVarTelemetryMetadata, PaletteSource, SlashCommandAcceptedDetails, SlashMenuSource,
-    TelemetryEvent, WorkflowTelemetryMetadata,
+    EnvVarTelemetryMetadata, PaletteSource, QueuedPromptSendNowTrigger,
+    SlashCommandAcceptedDetails, SlashMenuSource, TelemetryEvent, WorkflowTelemetryMetadata,
 };
 use crate::session_management::SessionNavigationPromptElements;
 use crate::settings::{
@@ -300,6 +299,7 @@ use crate::terminal::input::suggestions_mode_model::{
 use crate::terminal::input::terminal_message_bar::TerminalInputMessageBar;
 use crate::terminal::input::user_query::{UserQueryMenuEvent, UserQueryMenuView};
 use crate::terminal::model::session::active_session::ActiveSession;
+use crate::terminal::model::session::shell_quote_arg;
 use crate::terminal::package_installers::command_at_cursor_has_common_package_installer_prefix;
 use crate::terminal::prompt_render_helper::should_render_ps1_prompt;
 use crate::terminal::universal_developer_input::AtContextMenuDisabledReason;
@@ -375,8 +375,9 @@ pub const DEBOUNCE_AI_QUERY_PREDICTION_PERIOD: Duration = Duration::from_millis(
 pub(super) const CLI_AGENT_RICH_INPUT_EDITOR_MAX_HEIGHT: f32 = 236.;
 pub(super) const CLI_AGENT_RICH_INPUT_EDITOR_TOP_PADDING: f32 = 10.;
 pub(super) const CLI_AGENT_RICH_INPUT_EDITOR_BOTTOM_PADDING: f32 = 8.;
-const CLI_AGENT_RICH_INPUT_HINT_KEY: &str = "terminal.input.hint.tell_agent_what_to_build";
-const CLOUD_MODE_V2_HINT_KEY: &str = "terminal.input.hint.kick_off_cloud_agent";
+pub(super) const CLI_AGENT_RICH_INPUT_HINT_TEXT: &str = "Tell the agent what to build...";
+
+const CLOUD_MODE_V2_HINT_TEXT: &str = "Kick off a cloud agent";
 const SHORT_CIRCUIT_HIGHLIGHTING_ACTIONS: [Option<PlainTextEditorViewAction>; 7] = [
     Some(PlainTextEditorViewAction::Space),
     Some(PlainTextEditorViewAction::NonExpandingSpace),
@@ -398,61 +399,63 @@ pub fn get_input_box_top_border_width() -> f32 {
 
 pub const COMPLETIONS_MENU_WIDTH: f32 = 330.;
 pub const OPEN_COMPLETIONS_KEYBINDING_NAME: &str = "input:open_completion_suggestions";
-const INPUT_A11Y_LABEL_KEY: &str = "terminal.input.a11y.label";
-const INPUT_A11Y_HELPER_KEY: &str = "terminal.input.a11y.helper";
-const AI_COMMAND_SEARCH_HINT_KEY: &str = "terminal.input.hint.ai_command_search";
+pub const INPUT_A11Y_LABEL: &str = "Command Input.";
+pub const INPUT_A11Y_HELPER: &str = "Input your shell command, press enter to execute. Press cmd-up to navigate to output of previously executed commands. Press cmd-l to re-focus command input.";
+pub const AI_COMMAND_SEARCH_HINT_TEXT: &str = "Type '#' for AI command suggestions";
 
-const AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_KEY: &str =
-    "terminal.input.hint.run_commands";
+const AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_TEXT: &str = "Run commands";
 
 // Rotating hint text options for new Agent Mode conversations
-const AGENT_MODE_HINT_OPTION_KEYS: &[&str] = &[
-    "terminal.input.agent_hint.deploy_react_vercel",
-    "terminal.input.agent_hint.help_debug_python_tests",
-    "terminal.input.agent_hint.setup_microservice_docker",
-    "terminal.input.agent_hint.fix_node_memory_leak",
-    "terminal.input.agent_hint.backup_postgres",
-    "terminal.input.agent_hint.migrate_mysql_postgres",
-    "terminal.input.agent_hint.monitor_aws",
-    "terminal.input.agent_hint.build_fastapi",
-    "terminal.input.agent_hint.optimize_sql",
-    "terminal.input.agent_hint.github_actions_deploy",
-    "terminal.input.agent_hint.redis_caching",
-    "terminal.input.agent_hint.troubleshoot_kubernetes",
-    "terminal.input.agent_hint.bigquery_pipeline",
-    "terminal.input.agent_hint.configure_https",
-    "terminal.input.agent_hint.refactor_legacy",
-    "terminal.input.agent_hint.create_auth_tests",
-    "terminal.input.agent_hint.elk_logs",
-    "terminal.input.agent_hint.oauth_express",
-    "terminal.input.agent_hint.optimize_docker",
-    "terminal.input.agent_hint.ab_testing",
+const AGENT_MODE_HINT_OPTIONS: &[&str] = &[
+    "Warp anything e.g. Deploy my React app to Vercel and set up environment variables",
+    "Warp anything e.g. Help me debug why my Python tests are failing in CI",
+    "Warp anything e.g. Set up a new microservice with Docker and create the deployment pipeline",
+    "Warp anything e.g. Find and fix the memory leak in my Node.js application",
+    "Warp anything e.g. Create a backup script for my PostgreSQL database and schedule it",
+    "Warp anything e.g. Help me migrate my data from MySQL to PostgreSQL",
+    "Warp anything e.g. Set up monitoring and alerts for my AWS infrastructure",
+    "Warp anything e.g. Build a REST API for my mobile app using FastAPI",
+    "Warp anything e.g. Help me optimize my SQL queries that are running slowly",
+    "Warp anything e.g. Create a GitHub Actions workflow to automatically deploy on merge",
+    "Warp anything e.g. Set up Redis caching for my web application",
+    "Warp anything e.g. Help me troubleshoot why my Kubernetes pods keep crashing",
+    "Warp anything e.g. Build a data pipeline to process CSV files and load them into BigQuery",
+    "Warp anything e.g. Set up SSL certificates and configure HTTPS for my domain",
+    "Warp anything e.g. Help me refactor this legacy code to use modern design patterns",
+    "Warp anything e.g. Create unit tests for my authentication service",
+    "Warp anything e.g. Set up log aggregation with ELK stack for my distributed system",
+    "Warp anything e.g. Help me implement OAuth2 authentication in my Express.js app",
+    "Warp anything e.g. Optimize my Docker images to reduce build times and size",
+    "Warp anything e.g. Set up A/B testing infrastructure for my web application",
 ];
 
-fn get_agent_mode_new_conversation_hint_key() -> &'static str {
+fn get_agent_mode_new_conversation_hint_text() -> &'static str {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static HINT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
-    let index = HINT_INDEX.fetch_add(1, Ordering::Relaxed) % AGENT_MODE_HINT_OPTION_KEYS.len();
-    AGENT_MODE_HINT_OPTION_KEYS[index]
+    let index = HINT_INDEX.fetch_add(1, Ordering::Relaxed) % AGENT_MODE_HINT_OPTIONS.len();
+    AGENT_MODE_HINT_OPTIONS[index]
 }
 
-fn get_stable_agent_mode_hint_key(cached_hint: &mut Option<&'static str>) -> &'static str {
+fn get_stable_agent_mode_hint_text(cached_hint: &mut Option<&'static str>) -> &'static str {
     if let Some(hint) = cached_hint {
         hint
     } else {
-        let new_hint = get_agent_mode_new_conversation_hint_key();
+        let new_hint = get_agent_mode_new_conversation_hint_text();
         *cached_hint = Some(new_hint);
         new_hint
     }
 }
 
-const AGENT_MODE_AI_ENABLED_STEER_HINT_KEY_UDI: &str = "terminal.input.hint.steer_running_agent";
-const AGENT_MODE_AI_ENABLED_STEER_HINT_KEY_CLASSIC: &str =
-    "terminal.input.hint.steer_running_agent_classic";
-const AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_KEY_UDI: &str = "terminal.input.hint.ask_follow_up";
-const AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_KEY_CLASSIC: &str =
-    "terminal.input.hint.ask_follow_up_classic";
+const AGENT_MODE_AI_ENABLED_STEER_HINT_TEXT_UDI: &str = "Steer the running agent";
+const AGENT_MODE_AI_ENABLED_STEER_HINT_TEXT_CLASSIC: &str =
+    "Steer the running agent, or backspace to exit";
+const AGENT_MODE_AI_ENABLED_QUEUE_HINT_TEXT_UDI: &str = "Queue a follow up for the running agent";
+const AGENT_MODE_AI_ENABLED_QUEUE_HINT_TEXT_CLASSIC: &str =
+    "Queue a follow up for the running agent, or backspace to exit";
+const AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_TEXT_UDI: &str = "Ask a follow up";
+const AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_TEXT_CLASSIC: &str =
+    "Ask a follow up, or backspace to exit";
 
 /// Action name for setting input mode to agent mode
 pub const SET_INPUT_MODE_AGENT_ACTION_NAME: &str = "input:set_mode_agent";
@@ -467,11 +470,6 @@ pub const SET_INPUT_MODE_UNLOCKED_AGENT_ACTION_NAME: &str = "input:set_mode_unlo
 pub const SET_INPUT_MODE_UNLOCKED_TERMINAL_ACTION_NAME: &str = "input:set_mode_unlocked_terminal";
 
 const START_NEW_CONVERSATION_KEYBINDING_NAME: &str = "input:start_new_agent_conversation";
-
-fn input_binding_description(fallback: &'static str, key: &'static str) -> BindingDescription {
-    BindingDescription::new(fallback)
-        .with_dynamic_override(move |app| Some(localization::text_for_app(app, key)))
-}
 
 /// The position ID used to identify the start of the replacement span for completions.
 const COMPLETIONS_START_OF_REPLACEMENT_SPAN_POSITION_ID: &str =
@@ -500,6 +498,11 @@ enum InputPrefixMode {
 
 const VIM_STATUS_BAR_BOTTOM_PADDING: f32 = 20.;
 
+const DYNAMIC_ENUM_GENERATE_MESSAGE: &str = "Run the following command to generate variants:";
+const DYNAMIC_ENUM_RUN_MESSAGE: &str = "Run command";
+const DYNAMIC_ENUM_PENDING_MESSAGE: &str = "Command pending...";
+const DYNAMIC_ENUM_FAILURE_MESSAGE: &str = "Command failed";
+const DYNAMIC_ENUM_NO_RESULTS_MESSAGE: &str = "Command returned no results";
 const DYNAMIC_ENUM_MENU_PADDING: f32 = 10.;
 const DYNAMIC_ENUM_MENU_HEIGHT_OFFSET: f32 = 25.;
 const DYNAMIC_ENUM_HORIZONTAL_TEXT_PADDING: f32 = 5.;
@@ -767,35 +770,27 @@ impl InputSuggestionsMode {
         }
     }
 
-    /// Returns the placeholder text key for this mode, if it has a custom one.
-    pub fn placeholder_text_key(&self) -> Option<&'static str> {
+    /// Returns the placeholder text for this mode, if it has a custom one.
+    pub fn placeholder_text(&self) -> Option<&'static str> {
         match self {
             InputSuggestionsMode::UserQueryMenu {
                 action: UserQueryMenuAction::ForkFrom,
                 ..
-            } => Some("terminal.input.placeholder.search_queries"),
+            } => Some("Search queries"),
             InputSuggestionsMode::UserQueryMenu {
                 action: UserQueryMenuAction::Rewind,
                 ..
-            } => Some("terminal.input.placeholder.search_queries_to_rewind"),
-            InputSuggestionsMode::ConversationMenu => {
-                Some("terminal.input.placeholder.search_conversations")
-            }
-            InputSuggestionsMode::SkillMenu => Some("terminal.input.placeholder.search_skills"),
-            InputSuggestionsMode::ModelSelector => Some("terminal.input.placeholder.search_models"),
-            InputSuggestionsMode::ProfileSelector => {
-                Some("terminal.input.placeholder.search_profiles")
-            }
+            } => Some("Search queries to rewind to"),
+            InputSuggestionsMode::ConversationMenu => Some("Search conversations"),
+            InputSuggestionsMode::SkillMenu => Some("Search skills"),
+            InputSuggestionsMode::ModelSelector => Some("Search models"),
+            InputSuggestionsMode::ProfileSelector => Some("Search profiles"),
             InputSuggestionsMode::SlashCommands if FeatureFlag::AgentView.is_enabled() => {
-                Some("terminal.input.placeholder.search_commands")
+                Some("Search commands")
             }
-            InputSuggestionsMode::PromptsMenu => Some("terminal.input.placeholder.search_prompts"),
-            InputSuggestionsMode::IndexedReposMenu => {
-                Some("terminal.input.placeholder.search_indexed_repos")
-            }
-            InputSuggestionsMode::PlanMenu { .. } => {
-                Some("terminal.input.placeholder.search_plans")
-            }
+            InputSuggestionsMode::PromptsMenu => Some("Search prompts"),
+            InputSuggestionsMode::IndexedReposMenu => Some("Search indexed repos"),
+            InputSuggestionsMode::PlanMenu { .. } => Some("Search plans"),
             _ => None,
         }
     }
@@ -887,10 +882,16 @@ pub enum CommandExecutionSource {
         /// in a shared session. This is used to associate the resulting command block
         /// with the original agent command.
         ai_metadata: Option<AgentInteractionMetadata>,
+        /// True when the command was dispatched by a queued command row rather than the current
+        /// editor buffer, so input draft state should be preserved.
+        preserve_input: bool,
     },
 
     /// A normal command execution request.
     User,
+    /// A command dispatched by the queued-prompts panel. It should execute like a user command but
+    /// must not treat the current editor contents as the submitted command.
+    QueuedCommand,
 
     EnvVarCollection {
         metadata: BlocklistEnvVarMetadata,
@@ -910,6 +911,44 @@ impl CommandExecutionSource {
                     ..
                 }
         )
+    }
+
+    pub fn should_preserve_input(&self) -> bool {
+        matches!(
+            self,
+            CommandExecutionSource::QueuedCommand
+                | CommandExecutionSource::SharedSession {
+                    preserve_input: true,
+                    ..
+                }
+        )
+    }
+}
+
+fn render_prompt_chip_shell_command(
+    command: &PromptChipShellCommand,
+    shell_type: ShellType,
+) -> String {
+    match command {
+        PromptChipShellCommand::GitCheckout { branch_name } => {
+            format!("git checkout {}", shell_quote_arg(branch_name, shell_type))
+        }
+        PromptChipShellCommand::GitCreateAndCheckoutBranch { branch_name } => {
+            format!(
+                "git checkout -b {} --",
+                shell_quote_arg(branch_name, shell_type)
+            )
+        }
+        PromptChipShellCommand::ChangeDirectory { dir_name } => {
+            format!("cd {}", shell_quote_arg(dir_name, shell_type))
+        }
+        PromptChipShellCommand::NvmUse { version } => {
+            format!("nvm use {}", shell_quote_arg(version, shell_type))
+        }
+        PromptChipShellCommand::NvmInstallLatestNode => "nvm install node".to_string(),
+        PromptChipShellCommand::Echo { message } => {
+            format!("echo {}", shell_quote_arg(message, shell_type))
+        }
     }
 }
 
@@ -1111,7 +1150,9 @@ pub enum InputAction {
     /// Toggles the inline conversation menu for selecting AI conversations.
     ToggleConversationsMenu,
 
-    StartNewAgentConversation,
+    StartNewAgentConversation {
+        origin: AgentViewEntryOrigin,
+    },
 
     /// This is for toggling whether autodetection is enabled/disabled at the app-level,
     /// not for whether its enabled/disabled for the current input
@@ -1792,7 +1833,7 @@ pub fn init(app: &mut AppContext) {
         FixedBinding::custom(
             CustomAction::History,
             InputAction::Up,
-            input_binding_description("Show History", "terminal.input.binding.show_history"),
+            "Show History",
             // We need to ensure the workflow info box is not open as the "up" arrow
             // key is used to navigate the environment variables dropdown.
             // Same goes with the LLM menu.
@@ -1809,17 +1850,14 @@ pub fn init(app: &mut AppContext) {
 
     app.register_editable_bindings([EditableBinding::new(
         "input:insert_network_logging_workflow",
-        input_binding_description(
-            "Show Warp network log",
-            "terminal.input.binding.show_warp_network_log",
-        ),
+        "Show Warp network log",
         WorkspaceAction::OpenNetworkLogPane,
     )
     .with_enabled(|| ContextFlag::NetworkLogConsole.is_enabled())]);
 
     app.register_editable_bindings([EditableBinding::new(
         "input:clear_screen",
-        input_binding_description("Clear screen", "terminal.input.binding.clear_screen"),
+        "Clear screen",
         InputAction::ClearScreen,
     )
     .with_context_predicate(id!("Input"))
@@ -1828,20 +1866,14 @@ pub fn init(app: &mut AppContext) {
     app.register_editable_bindings([
         EditableBinding::new(
             "terminal:scroll_up_one_page",
-            input_binding_description(
-                "Scroll terminal output up one page",
-                "terminal.input.binding.scroll_up_one_page",
-            ),
+            "Scroll terminal output up one page",
             InputAction::PageUp,
         )
         .with_context_predicate(id!("Input") & !id!("IMEOpen"))
         .with_key_binding("pageup"),
         EditableBinding::new(
             "terminal:scroll_down_one_page",
-            input_binding_description(
-                "Scroll terminal output down one page",
-                "terminal.input.binding.scroll_down_one_page",
-            ),
+            "Scroll terminal output down one page",
             InputAction::PageDown,
         )
         .with_context_predicate(id!("Input") & !id!("IMEOpen"))
@@ -1850,7 +1882,8 @@ pub fn init(app: &mut AppContext) {
 
     app.register_editable_bindings([EditableBinding::new(
         "workspace:edit_prompt",
-        input_binding_description("Edit Prompt", "terminal.input.binding.edit_prompt"),
+        BindingDescription::new("Edit Prompt")
+            .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Edit Prompt"),
         WorkspaceAction::OpenPromptEditor {
             open_source: PromptEditorOpenSource::CommandPalette,
         },
@@ -1869,10 +1902,7 @@ pub fn init(app: &mut AppContext) {
     {
         app.register_editable_bindings([EditableBinding::new(
             "input:toggle_classic_completions_mode",
-            input_binding_description(
-                "(Experimental) Toggle classic completions mode",
-                "terminal.input.binding.toggle_classic_completions_mode",
-            ),
+            "(Experimental) Toggle classic completions mode",
             InputAction::ToggleClassicCompletionsMode,
         )
         .with_context_predicate(id!("Input"))]);
@@ -1882,7 +1912,7 @@ pub fn init(app: &mut AppContext) {
     app.register_editable_bindings([
         EditableBinding::new(
             "workspace:show_command_search",
-            input_binding_description("Command Search", "terminal.input.binding.command_search"),
+            "Command Search",
             WorkspaceAction::ShowCommandSearch(Default::default()),
         )
         // Only show command search if none of the input-related panels are open, and if we aren't
@@ -1897,7 +1927,7 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::CommandSearch),
         EditableBinding::new(
             "input:search_command_history",
-            input_binding_description("History Search", "terminal.input.binding.history_search"),
+            "History Search",
             WorkspaceAction::ShowCommandSearch(CommandSearchOptions {
                 filter: Some(QueryFilter::History),
                 init_content: Default::default(),
@@ -1907,10 +1937,7 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::HistorySearch),
         EditableBinding::new(
             OPEN_COMPLETIONS_KEYBINDING_NAME,
-            input_binding_description(
-                "Open completions menu",
-                "terminal.input.binding.open_completions_menu",
-            ),
+            "Open completions menu",
             InputAction::MaybeOpenCompletionSuggestions,
         )
         .with_context_predicate(id!("Input"))
@@ -1920,7 +1947,7 @@ pub fn init(app: &mut AppContext) {
     if let Some(custom_action) = workflows::CategoriesView::custom_action() {
         app.register_editable_bindings([EditableBinding::new(
             "input:toggle_workflows",
-            input_binding_description("Workflows", "terminal.input.binding.workflows"),
+            "Workflows",
             InputAction::SelectAndRefreshVoltron(VoltronItem::Workflows),
         )
         .with_context_predicate(id!("Input"))
@@ -1943,10 +1970,7 @@ pub fn init(app: &mut AppContext) {
     app.register_editable_bindings([
         EditableBinding::new(
             "input:toggle_natural_language_command_search",
-            input_binding_description(
-                "Open AI Command Suggestions",
-                "terminal.input.binding.open_ai_command_suggestions",
-            ),
+            "Open AI Command Suggestions",
             InputAction::ShowAiCommandSearch,
         )
         .with_context_predicate(
@@ -1959,11 +1983,12 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::AISearch),
         EditableBinding::new(
             START_NEW_CONVERSATION_KEYBINDING_NAME,
-            input_binding_description(
-                "New agent conversation",
-                "terminal.input.binding.new_agent_conversation",
-            ),
-            InputAction::StartNewAgentConversation,
+            "New agent conversation",
+            InputAction::StartNewAgentConversation {
+                origin: AgentViewEntryOrigin::Input {
+                    was_prompt_autodetected: false,
+                },
+            },
         )
         .with_enabled(|| !FeatureFlag::AgentView.is_enabled())
         .with_group(bindings::BindingGroup::WarpAi.as_str())
@@ -1974,10 +1999,7 @@ pub fn init(app: &mut AppContext) {
         .with_linux_or_windows_key_binding("ctrl-alt-shift-N"),
         EditableBinding::new(
             "input:enable_auto_detection",
-            input_binding_description(
-                "Trigger Auto Detection",
-                "terminal.input.binding.trigger_auto_detection",
-            ),
+            "Trigger Auto Detection",
             InputAction::EnableAutoDetection,
         )
         .with_enabled(|| FeatureFlag::AgentMode.is_enabled())
@@ -1991,10 +2013,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("alt-shift-I"),
         EditableBinding::new(
             "input:clear_and_reset_ai_context_menu_query",
-            input_binding_description(
-                "Clear and reset AI context menu query",
-                "terminal.input.binding.clear_and_reset_ai_context_menu_query",
-            ),
+            "Clear and reset AI context menu query",
             InputAction::ClearAndResetAIContextMenuQuery,
         )
         .with_context_predicate(id!("Input") & id!("AIContextMenuOpen") & !id!("IMEOpen"))
@@ -2225,11 +2244,7 @@ impl Input {
                     event
                 {
                     let window_id = ctx.window_id();
-                    let toast_message = localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.cloud_handoff.prepare_failed",
-                        &[("error", error_message)],
-                    );
+                    let toast_message = format!("Failed to prepare cloud handoff: {error_message}");
                     ToastStack::handle(ctx).update(ctx, |ts, ctx| {
                         ts.add_ephemeral_toast(
                             DismissibleToast::error(toast_message),
@@ -3173,6 +3188,7 @@ impl Input {
                         | BlocklistAIHistoryEvent::SplitConversation { .. }
                         | BlocklistAIHistoryEvent::AppendedExchange { .. }
                         | BlocklistAIHistoryEvent::UpdatedStreamingExchange { .. }
+                        | BlocklistAIHistoryEvent::UpdatedConversationTitle { .. }
                         | BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. }
                         | BlocklistAIHistoryEvent::RestoredConversations { .. }
                 );
@@ -3186,6 +3202,21 @@ impl Input {
                 ctx.notify();
             },
         );
+        ctx.subscribe_to_model(&QueuedQueryModel::handle(ctx), |me, _, event, ctx| {
+            let affects_hint = match event {
+                QueuedQueryEvent::QueueNextPromptToggled { conversation_id } => me
+                    .ai_context_model
+                    .as_ref(ctx)
+                    .selected_conversation_id(ctx)
+                    .is_some_and(|selected_id| selected_id == *conversation_id),
+                QueuedQueryEvent::DefaultModeChanged => true,
+                _ => false,
+            };
+            if affects_hint {
+                me.set_zero_state_hint_text(ctx);
+                ctx.notify();
+            }
+        });
 
         ctx.subscribe_to_model(&ai_context_model, |me, context_model, event, ctx| {
             match event {
@@ -3248,10 +3279,9 @@ impl Input {
                     let window_id = ctx.window_id();
                     ToastStack::handle(ctx).update(ctx, |ts, ctx| {
                         ts.add_ephemeral_toast(
-                            DismissibleToast::error(localization::text_for_app(
-                                ctx,
-                                "terminal.input.toast.attached_images_removed",
-                            )),
+                            DismissibleToast::error(
+                                "Attached images were removed — the selected model does not support images.".to_string(),
+                            ),
                             window_id,
                             ctx,
                         );
@@ -3553,16 +3583,25 @@ impl Input {
 
         let queued_prompts_panel = FeatureFlag::QueueSlashCommand.is_enabled().then(|| {
             let cli_subagent_controller = cli_subagent_controller.clone();
+            let host_editor = editor.clone();
             let panel = ctx.add_typed_action_view(|ctx| {
                 QueuedPromptsPanelView::new(
                     terminal_view_id,
                     suggestions_mode_model.clone(),
                     cli_subagent_controller,
+                    host_editor,
                     ctx,
                 )
             });
             ctx.subscribe_to_view(&panel, |me, _, event, ctx| {
                 me.handle_queued_prompts_panel_event(event, ctx);
+            });
+            // Seed the host-pushed send permission; later changes flow through the
+            // shared-session role-change push in `TerminalView::on_self_role_updated`. Input
+            // emptiness is not pushed: the panel reads the host editor live.
+            let can_send_prompt = !model.lock().shared_session_status().is_reader();
+            panel.update(ctx, |panel, ctx| {
+                panel.set_can_send_prompt(can_send_prompt, ctx);
             });
             panel
         });
@@ -3735,9 +3774,20 @@ impl Input {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            QueuedPromptsPanelEvent::SendNow { text } => {
-                self.submit_queued_prompt_for_active_pane(text.clone(), ctx);
-                self.focus_input_box(ctx);
+            QueuedPromptsPanelEvent::SendNow {
+                conversation_id,
+                query_id,
+                text,
+                is_command,
+            } => {
+                self.send_queued_row_immediately(
+                    *conversation_id,
+                    *query_id,
+                    text.clone(),
+                    *is_command,
+                    QueuedPromptSendNowTrigger::SendNowButton,
+                    ctx,
+                );
             }
             QueuedPromptsPanelEvent::RowDeleted => {
                 self.focus_input_box(ctx);
@@ -3746,6 +3796,53 @@ impl Input {
                 self.focus_input_box(ctx);
             }
         }
+    }
+
+    /// Dispatches a queued row immediately: commands execute in the terminal, prompts submit to
+    /// the conversation's current target. On dispatch, removes the fired row and refocuses the
+    /// input. Shared by the row's send-now button and empty-buffer Enter.
+    fn send_queued_row_immediately(
+        &mut self,
+        conversation_id: AIConversationId,
+        query_id: QueuedQueryId,
+        text: String,
+        is_command: bool,
+        trigger: QueuedPromptSendNowTrigger,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // Read the origin before dispatch; the row is removed once it fires.
+        let origin = QueuedQueryModel::as_ref(ctx)
+            .queue(conversation_id)
+            .iter()
+            .find(|row| row.id() == query_id)
+            .map(|row| row.origin());
+        let dispatched = if is_command {
+            self.execute_queued_command(&text, conversation_id, ctx)
+        } else {
+            self.submit_queued_prompt_for_active_pane(text, conversation_id, query_id, ctx);
+            true
+        };
+        if !dispatched {
+            return;
+        }
+        if let Some(origin) = origin {
+            send_telemetry_from_ctx!(
+                TelemetryEvent::QueuedPromptSentNow {
+                    origin: origin.into(),
+                    trigger,
+                },
+                ctx
+            );
+        }
+        QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+            model.remove_fired_row(conversation_id, query_id, ctx);
+        });
+        self.focus_input_box(ctx);
+    }
+
+    /// The queued prompts panel, when [`FeatureFlag::QueueSlashCommand`] is enabled.
+    pub(crate) fn queued_prompts_panel(&self) -> Option<&ViewHandle<QueuedPromptsPanelView>> {
+        self.queued_prompts_panel.as_ref()
     }
 
     pub fn agent_input_footer(&self) -> &ViewHandle<AgentInputFooter> {
@@ -4090,17 +4187,14 @@ impl Input {
         if !skipped_files.is_empty() {
             let window_id = ctx.window_id();
             let message = if skipped_files.len() == 1 {
-                localization::text_for_app_with_args(
-                    ctx,
-                    "terminal.input.toast.attachment_skipped.singular",
-                    &[("filename", &skipped_files[0])],
+                format!(
+                    "{} was not attached — exceeds 10MB limit.",
+                    skipped_files[0]
                 )
             } else {
-                let count = skipped_files.len().to_string();
-                localization::text_for_app_with_args(
-                    ctx,
-                    "terminal.input.toast.attachment_skipped.plural",
-                    &[("count", &count)],
+                format!(
+                    "{} files were not attached — exceed 10MB limit.",
+                    skipped_files.len()
                 )
             };
             ToastStack::handle(ctx).update(ctx, |ts, ctx| {
@@ -4518,10 +4612,7 @@ impl Input {
                     ctx.dispatch_typed_action_deferred(action);
                 } else {
                     ctx.emit(Event::ShowToast {
-                        message: localization::text_for_app(
-                            ctx,
-                            "terminal.input.toast.could_not_navigate_to_conversation",
-                        ),
+                        message: "Couldn't navigate to conversation.".to_string(),
                         flavor: ToastFlavor::Error,
                     });
                 }
@@ -5018,6 +5109,7 @@ impl Input {
                     summarize_after_fork: false,
                     summarization_prompt: None,
                     initial_prompt: None,
+                    initial_attachments: vec![],
                     destination,
                 });
 
@@ -5381,7 +5473,7 @@ impl Input {
     ///
     /// This enters AI mode, resolves the skill from SkillManager, and submits it.
     ///
-    /// When `is_queued_prompt` is true, this is the first send of a previously queued prompt:
+    /// When `queued_query_id` is `Some`, this is the first send of a previously queued prompt:
     /// the input buffer is left alone (the user may have typed new input while the agent was
     /// busy) and the emitted `SentRequest` event is tagged as a queued-prompt submission so
     /// other UI subscribers also skip their user-submission side effects.
@@ -5391,9 +5483,14 @@ impl Input {
         &mut self,
         reference: SkillReference,
         user_query: Option<String>,
-        is_queued_prompt: bool,
+        queued_query_id: Option<QueuedQueryId>,
+        // The conversation a fired queued skill was queued on, used to route the send and resolve
+        // the row's attachments instead of re-deriving from the current UI selection. `None` for
+        // direct (non-queued) skill invocations.
+        conversation_id_override: Option<AIConversationId>,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
+        let is_queued_prompt = queued_query_id.is_some();
         // Resolve the skill from SkillManager
         let skill = match SkillManager::handle(ctx)
             .as_ref(ctx)
@@ -5405,11 +5502,7 @@ impl Input {
                 let window_id = ctx.window_id();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     toast_stack.add_ephemeral_toast(
-                        DismissibleToast::error(localization::text_for_app_with_args(
-                            ctx,
-                            "terminal.input.toast.skill_not_found",
-                            &[("skill", &reference.to_string())],
-                        )),
+                        DismissibleToast::error(format!("Skill not found: {}", reference)),
                         window_id,
                         ctx,
                     );
@@ -5444,8 +5537,13 @@ impl Input {
         // Send the skill invocation request
         let request = SlashCommandRequest::InvokeSkill { skill, user_query };
         self.ai_controller.update(ctx, move |controller, ctx| {
-            if is_queued_prompt {
-                controller.send_queued_slash_command_request(request, ctx);
+            if let Some(query_id) = queued_query_id {
+                controller.send_queued_slash_command_request(
+                    request,
+                    query_id,
+                    conversation_id_override,
+                    ctx,
+                );
             } else {
                 controller.send_slash_command_request(request, ctx);
             }
@@ -5472,10 +5570,8 @@ impl Input {
         else {
             let window_id = ctx.window_id();
             ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                let toast = DismissibleToast::default(localization::text_for_app(
-                    ctx,
-                    "terminal.input.conversation_export.no_active_conversation",
-                ));
+                let toast =
+                    DismissibleToast::default(String::from("No active conversation to export"));
                 toast_stack.add_ephemeral_toast(toast, window_id, ctx);
             });
             return;
@@ -5539,10 +5635,8 @@ impl Input {
             let window_id = ctx.window_id();
             let display_path = file_path.display().to_string();
             ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                let toast = DismissibleToast::default(localization::text_for_app_with_args(
-                    ctx,
-                    "terminal.input.conversation_export.overwrite_warning",
-                    &[("path", &display_path)],
+                let toast = DismissibleToast::default(format!(
+                    "File {display_path} already exists and will be overwritten"
                 ));
                 toast_stack.add_ephemeral_toast(toast, window_id, ctx);
             });
@@ -5555,10 +5649,8 @@ impl Input {
                 let window_id = ctx.window_id();
                 let display_path = file_path.display().to_string();
                 ToastStack::handle(ctx).update(ctx, move |toast_stack, ctx| {
-                    let toast = DismissibleToast::default(localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.conversation_export.success",
-                        &[("path", &display_path)],
+                    let toast = DismissibleToast::default(format!(
+                        "Conversation exported to {display_path}"
                     ));
                     toast_stack.add_ephemeral_toast(toast, window_id, ctx);
                 });
@@ -5566,35 +5658,27 @@ impl Input {
             Err(e) => {
                 // Show error toast with user-friendly message
                 let user_message = match e.kind() {
-                    std::io::ErrorKind::PermissionDenied => localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.conversation_export.error.permission_denied",
-                        &[("path", &file_path.display().to_string())],
-                    ),
-                    std::io::ErrorKind::NotFound => {
-                        let parent_path = file_path
-                            .parent()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
-                        localization::text_for_app_with_args(
-                            ctx,
-                            "terminal.input.conversation_export.error.directory_not_found",
-                            &[("path", &parent_path)],
+                    std::io::ErrorKind::PermissionDenied => {
+                        format!(
+                            "Permission denied writing to {}. Check file permissions.",
+                            file_path.display()
                         )
                     }
-                    std::io::ErrorKind::AlreadyExists => localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.conversation_export.error.file_exists",
-                        &[("path", &file_path.display().to_string())],
-                    ),
-                    _ => localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.conversation_export.error.failed",
-                        &[
-                            ("path", &file_path.display().to_string()),
-                            ("error", &e.to_string()),
-                        ],
-                    ),
+                    std::io::ErrorKind::NotFound => {
+                        format!(
+                            "Directory not found: {}",
+                            file_path
+                                .parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default()
+                        )
+                    }
+                    std::io::ErrorKind::AlreadyExists => {
+                        format!("File {} already exists", file_path.display())
+                    }
+                    _ => {
+                        format!("Failed to export to {}: {}", file_path.display(), e)
+                    }
                 };
 
                 log::error!(
@@ -5862,9 +5946,17 @@ impl Input {
                 });
             }
             PromptDisplayEvent::TryExecuteCommand(command) => {
+                let Some(shell_type) = self
+                    .active_session(ctx)
+                    .map(|session| session.shell().shell_type())
+                else {
+                    log::warn!("Tried to execute prompt chip command without an active session");
+                    return;
+                };
+                let command = render_prompt_chip_shell_command(command, shell_type);
                 // Snapshot the current input so we can restore it after the command completes.
                 let current_input = self.buffer_text(ctx);
-                if self.try_execute_command_from_source(command, CommandExecutionSource::User, ctx)
+                if self.try_execute_command_from_source(&command, CommandExecutionSource::User, ctx)
                 {
                     self.cancel_active_conversation(ctx, CancellationReason::UserCommandExecuted);
                     if !current_input.is_empty() {
@@ -6050,17 +6142,42 @@ impl Input {
     fn agent_mode_hint_text(&mut self, app: &AppContext) -> String {
         let input_model = self.ai_input_model.as_ref(app);
         let is_udi_enabled = InputSettings::as_ref(app).is_universal_developer_input_enabled(app);
+        let selected_conversation_id = self
+            .ai_context_model
+            .as_ref(app)
+            .selected_conversation_id(app);
+        let is_queue_next_prompt_enabled = FeatureFlag::QueueSlashCommand.is_enabled()
+            && selected_conversation_id.is_some_and(|conversation_id| {
+                QueuedQueryModel::as_ref(app).is_queue_next_prompt_enabled(conversation_id)
+            });
 
-        let key = match (
+        match (
             input_model.input_type(),
             input_model.should_run_input_autodetection(app),
         ) {
-            (InputType::Shell, false) => AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_KEY,
+            (InputType::Shell, false) => {
+                AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_TEXT.to_owned()
+            }
             (InputType::Shell, true) => {
                 // Ensure hint text is cached for new conversations
-                get_stable_agent_mode_hint_key(&mut self.cached_agent_mode_hint_text)
+                get_stable_agent_mode_hint_text(&mut self.cached_agent_mode_hint_text).to_owned()
             }
             (InputType::AI, _) => {
+                if let Some(conversation) =
+                    self.ai_context_model.as_ref(app).selected_conversation(app)
+                {
+                    if conversation.is_child_agent_conversation() {
+                        let agent_name = conversation.agent_name().unwrap_or("child");
+                        if conversation.status().is_in_progress() {
+                            if is_queue_next_prompt_enabled {
+                                return format!("Queue a follow up for the {agent_name} agent");
+                            }
+                            return format!("Steer the {agent_name} agent");
+                        }
+                        return format!("Ask the {agent_name} agent a follow up");
+                    }
+                }
+
                 // Follow the `agent_indicator` pattern (see `app/src/tab.rs`):
                 //  * `None` (no conversation, empty, passive, or untitled) => new conversation => "Warp anything"
                 //  * `InProgress`                                           => agent running    => "Steer"
@@ -6071,28 +6188,33 @@ impl Input {
                     .selected_conversation_status_for_hint(app)
                 {
                     Some(status) if status.is_in_progress() => {
-                        if is_udi_enabled {
-                            AGENT_MODE_AI_ENABLED_STEER_HINT_KEY_UDI
+                        if is_queue_next_prompt_enabled {
+                            if is_udi_enabled {
+                                AGENT_MODE_AI_ENABLED_QUEUE_HINT_TEXT_UDI.to_owned()
+                            } else {
+                                AGENT_MODE_AI_ENABLED_QUEUE_HINT_TEXT_CLASSIC.to_owned()
+                            }
+                        } else if is_udi_enabled {
+                            AGENT_MODE_AI_ENABLED_STEER_HINT_TEXT_UDI.to_owned()
                         } else {
-                            AGENT_MODE_AI_ENABLED_STEER_HINT_KEY_CLASSIC
+                            AGENT_MODE_AI_ENABLED_STEER_HINT_TEXT_CLASSIC.to_owned()
                         }
                     }
                     Some(_) => {
                         if is_udi_enabled {
-                            AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_KEY_UDI
+                            AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_TEXT_UDI.to_owned()
                         } else {
-                            AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_KEY_CLASSIC
+                            AGENT_MODE_AI_ENABLED_FOLLOW_UP_HINT_TEXT_CLASSIC.to_owned()
                         }
                     }
                     None => {
                         // Ensure hint text is cached for new conversations
-                        get_stable_agent_mode_hint_key(&mut self.cached_agent_mode_hint_text)
+                        get_stable_agent_mode_hint_text(&mut self.cached_agent_mode_hint_text)
+                            .to_owned()
                     }
                 }
             }
-        };
-
-        localization::text_for_app(app, key)
+        }
     }
 
     fn handle_input_settings_event(
@@ -6513,32 +6635,28 @@ impl Input {
     pub fn clear_cached_hint_text(&mut self) {
         self.cached_agent_mode_hint_text = None;
     }
-    fn cli_agent_rich_input_hint_text(&self, ctx: &ViewContext<Self>) -> String {
+    fn cli_agent_rich_input_hint_text(&self, ctx: &ViewContext<Self>) -> Cow<'static, str> {
         if self.is_locked_in_shell_mode(ctx) {
-            return localization::text_for_app(
-                ctx,
-                AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_KEY,
-            );
+            return Cow::Borrowed(AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_TEXT);
         }
 
         CLIAgentSessionsModel::as_ref(ctx)
             .session(self.terminal_view_id)
             .map(|session| match session.agent {
-                CLIAgent::Unknown => localization::text_for_app(ctx, CLI_AGENT_RICH_INPUT_HINT_KEY),
-                _ => localization::text_for_app_with_args(
-                    ctx,
-                    "terminal.input.hint.enter_prompt_for_agent",
-                    &[("agent", session.agent.display_name())],
-                ),
+                CLIAgent::Unknown => Cow::Borrowed(CLI_AGENT_RICH_INPUT_HINT_TEXT),
+                _ => Cow::Owned(format!(
+                    "Enter prompt for {}...",
+                    session.agent.display_name()
+                )),
             })
-            .unwrap_or_else(|| localization::text_for_app(ctx, CLI_AGENT_RICH_INPUT_HINT_KEY))
+            .unwrap_or(Cow::Borrowed(CLI_AGENT_RICH_INPUT_HINT_TEXT))
     }
 
     pub fn set_zero_state_hint_text(&mut self, ctx: &mut ViewContext<Self>) {
         if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
             let hint = self.cli_agent_rich_input_hint_text(ctx);
             self.editor.update(ctx, |editor, ctx| {
-                editor.set_placeholder_text(&hint, ctx);
+                editor.set_placeholder_text(hint, ctx);
             });
             return;
         }
@@ -6547,23 +6665,14 @@ impl Input {
                 .active_conversation(self.terminal_view_id)
                 .is_none_or(|c| c.is_empty());
             let hint = if conversation_is_empty {
-                localization::text_for_app(ctx, CLOUD_MODE_V2_HINT_KEY)
+                CLOUD_MODE_V2_HINT_TEXT.to_owned()
             } else {
                 self.handoff_compose_state
                     .as_ref(ctx)
                     .selected_environment_id()
                     .and_then(|id| CloudAmbientAgentEnvironment::get_by_id(id, ctx))
-                    .map(|env| {
-                        let display_name = env.model().string_model.display_name();
-                        localization::text_for_app_with_args(
-                            ctx,
-                            "terminal.input.hint.handoff_to_environment",
-                            &[("environment", display_name.as_str())],
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        localization::text_for_app(ctx, "terminal.input.hint.handoff_to_cloud")
-                    })
+                    .map(|env| format!("Hand off to {}", env.model().string_model.display_name()))
+                    .unwrap_or_else(|| "Handoff to cloud".to_owned())
             };
             self.editor.update(ctx, |editor, ctx| {
                 editor.set_placeholder_text(&hint, ctx);
@@ -6575,10 +6684,7 @@ impl Input {
             let show_hint = *InputSettings::as_ref(ctx).show_hint_text;
             self.editor.update(ctx, |editor, ctx| {
                 if show_hint {
-                    editor.set_placeholder_text(
-                        localization::text_for_app(ctx, CLOUD_MODE_V2_HINT_KEY),
-                        ctx,
-                    );
+                    editor.set_placeholder_text(CLOUD_MODE_V2_HINT_TEXT, ctx);
                 } else {
                     editor.clear_placeholder_text(ctx);
                 }
@@ -6591,10 +6697,10 @@ impl Input {
             .suggestions_mode_model
             .as_ref(ctx)
             .mode()
-            .placeholder_text_key()
+            .placeholder_text()
         {
             self.editor.update(ctx, |editor, ctx| {
-                editor.set_placeholder_text(localization::text_for_app(ctx, placeholder), ctx);
+                editor.set_placeholder_text(placeholder, ctx);
             });
             return;
         }
@@ -6624,14 +6730,11 @@ impl Input {
                 // agent_mode_hint_text now handles caching internally
                 let hint_text = self.agent_mode_hint_text(ctx);
                 self.editor.update(ctx, |editor, ctx| {
-                    editor.set_placeholder_text(&hint_text, ctx);
+                    editor.set_placeholder_text(hint_text, ctx);
                 });
             } else {
                 self.editor.update(ctx, |editor, ctx| {
-                    editor.set_placeholder_text(
-                        localization::text_for_app(ctx, AI_COMMAND_SEARCH_HINT_KEY),
-                        ctx,
-                    );
+                    editor.set_placeholder_text(AI_COMMAND_SEARCH_HINT_TEXT, ctx);
                 });
             }
         } else {
@@ -6846,6 +6949,7 @@ impl Input {
         &mut self,
         command: &str,
         participant_id: ParticipantId,
+        preserve_input: bool,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         // Cancel any active agent conversation when the sharer executes a command on behalf of the viewer
@@ -6874,6 +6978,7 @@ impl Input {
                 participant_id,
                 block_id,
                 ai_metadata: None,
+                preserve_input,
             },
             ctx,
         )
@@ -6913,6 +7018,15 @@ impl Input {
     }
 
     pub fn try_execute_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
+        self.try_execute_command_with_options(command, false, ctx)
+    }
+
+    fn try_execute_command_with_options(
+        &mut self,
+        command: &str,
+        preserve_input: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
         let shared_session_status = self.model.lock().shared_session_status().clone();
         if shared_session_status.is_sharer_or_viewer() {
             // If this is a viewer who isn't also an executor, they should not
@@ -6923,7 +7037,7 @@ impl Input {
                 // caller of this API is the `enter` handler.
                 log::warn!("Viewer tried to execute a command as a reader");
                 return false;
-            } else if shared_session_status.is_executor() {
+            } else if shared_session_status.is_executor() && !preserve_input {
                 let original_buffer = self.freeze_input_in_loading_state(ctx);
 
                 if let Some(shared_session_input_state) = self.shared_session_input_state.as_mut() {
@@ -6943,11 +7057,44 @@ impl Input {
             self.try_execute_command_on_behalf_of_shared_session_participant(
                 command,
                 participant_id,
+                preserve_input,
+                ctx,
+            )
+        } else if preserve_input {
+            self.try_execute_command_from_source(
+                command,
+                CommandExecutionSource::QueuedCommand,
                 ctx,
             )
         } else {
             self.try_execute_command_from_source(command, CommandExecutionSource::User, ctx)
         }
+    }
+
+    /// Executes a command drained or sent immediately from the queued-prompts panel and keeps the
+    /// remaining queue paused until the command's terminal block finishes.
+    pub(crate) fn execute_queued_command(
+        &mut self,
+        command: &str,
+        conversation_id: AIConversationId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let started = self.try_execute_command_with_options(command, true, ctx);
+        if started {
+            QueuedQueryModel::handle(ctx).update(ctx, |model, _| {
+                model.arm_command_in_flight(conversation_id);
+            });
+        }
+        started
+    }
+
+    fn has_queued_command_in_flight(&self, ctx: &AppContext) -> bool {
+        QueuedQueryModel::as_ref(ctx)
+            .command_in_flight_for_terminal_view(
+                self.terminal_view_id,
+                BlocklistAIHistoryModel::as_ref(ctx),
+            )
+            .is_some()
     }
 
     /// Executes the given command if the terminal session is in a valid state to accept and
@@ -6975,10 +7122,8 @@ impl Input {
                 let window_id = ctx.window_id();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     toast_stack.add_ephemeral_toast(
-                        DismissibleToast::error(localization::text_for_app_with_args(
-                            ctx,
-                            "terminal.input.toast.command_already_running",
-                            &[("command", &truncated_command)],
+                        DismissibleToast::error(format!(
+                            "Cannot run `{truncated_command}` (command already running)."
                         )),
                         window_id,
                         ctx,
@@ -7685,17 +7830,13 @@ impl Input {
         // Emit the a11y content as the last step so that it overwrites any of the a11y content
         // emitted by the editor (if multiple `AccessibilityContent`s are emitted within the same
         // event loop, the last one wins).
-        let mut accessibility_text = localization::text_for_app_with_args(
-            ctx,
-            "terminal.input.a11y.workflow_command_inserted",
-            &[("command", &command_to_insert)],
-        );
+        let mut accessibility_text = format!("Workflow command {} inserted.", &command_to_insert);
         if let Some(a11y_content) = self.selected_workflow_a11y_text(ctx) {
             let _ = write!(accessibility_text, " {a11y_content}");
         }
         ctx.emit_a11y_content(AccessibilityContent::new(
             accessibility_text,
-            localization::text_for_app(ctx, "terminal.input.a11y.select_next_workflow_argument"),
+            "Press shift-tab to select the next workflow argument",
             WarpA11yRole::UserAction,
         ));
 
@@ -7793,16 +7934,9 @@ impl Input {
             .selected_workflow_state
             .as_ref()
             .and_then(|selected_workflow_state| {
-                let argument_name = selected_workflow_state.more_info_view.read(ctx, |view, _| {
+                selected_workflow_state.more_info_view.read(ctx, |view, _| {
                     view.selected_argument()
-                        .map(|argument| argument.name().to_string())
-                });
-                argument_name.map(|argument| {
-                    localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.a11y.selected_workflow_argument",
-                        &[("argument", &argument)],
-                    )
+                        .map(|argument| format!("Selected Workflow argument {}", argument.name()))
                 })
             })
     }
@@ -8054,11 +8188,7 @@ impl Input {
                 self.try_execute_command(&command, ctx);
 
                 ctx.emit_a11y_content(AccessibilityContent::new_without_help(
-                    localization::text_for_app_with_args(
-                        ctx,
-                        "terminal.input.a11y.executed_command",
-                        &[("command", &command)],
-                    ),
+                    format!("Executed: {command}"),
                     WarpA11yRole::UserAction,
                 ));
             }
@@ -10637,15 +10767,12 @@ impl Input {
                     // Show voice status as placeholder when the buffer is empty.
                     if self.editor.as_ref(ctx).is_empty(ctx) {
                         let placeholder = if *is_listening {
-                            "terminal.input.voice.listening"
+                            "Listening..."
                         } else {
-                            "terminal.input.voice.transcribing"
+                            "Transcribing..."
                         };
                         self.editor.update(ctx, |editor, ctx| {
-                            editor.set_placeholder_text(
-                                localization::text_for_app(ctx, placeholder),
-                                ctx,
-                            );
+                            editor.set_placeholder_text(placeholder, ctx);
                         });
                     }
                 } else {
@@ -12908,6 +13035,36 @@ impl Input {
                 });
             }
             return;
+        } else if self
+            .queued_prompts_panel
+            .as_ref()
+            .is_some_and(|panel| panel.as_ref(ctx).enter_sends_queued_prompt(ctx))
+        {
+            // An empty-buffer Enter sends the top queued row, mirroring its send-now button.
+            // The locked initial cloud-mode head row is not sendable, so Enter does nothing
+            // while it sits at the head of the queue.
+            let conversation_id =
+                BlocklistAIHistoryModel::as_ref(ctx).active_conversation_id(self.terminal_view_id);
+            let top_row = conversation_id.and_then(|conversation_id| {
+                QueuedQueryModel::as_ref(ctx)
+                    .queue(conversation_id)
+                    .first()
+                    .filter(|row| !row.is_locked())
+                    .map(|row| (row.id(), row.text().to_owned(), row.is_command()))
+            });
+            if let (Some(conversation_id), Some((query_id, text, is_command))) =
+                (conversation_id, top_row)
+            {
+                self.send_queued_row_immediately(
+                    conversation_id,
+                    query_id,
+                    text,
+                    is_command,
+                    QueuedPromptSendNowTrigger::EnterOnEmptyInput,
+                    ctx,
+                );
+            }
+            return;
         } else if self.maybe_launch_cloud_handoff_request(ctx)
             || self.maybe_queue_input_for_in_progress_conversation(ctx)
             || self.maybe_queue_input_during_cloud_setup(ctx)
@@ -12992,10 +13149,10 @@ impl Input {
                         let window_id = ctx.window_id();
                         ToastStack::handle(ctx).update(ctx, |ts, ctx| {
                             ts.add_ephemeral_toast(
-                                DismissibleToast::error(localization::text_for_app(
-                                    ctx,
-                                    "terminal.input.toast.no_agent_harnesses",
-                                )),
+                                DismissibleToast::error(
+                                    "No agent harnesses are available. Contact your team admin."
+                                        .to_string(),
+                                ),
                                 window_id,
                                 ctx,
                             );
@@ -13046,10 +13203,9 @@ impl Input {
                         let window_id = ctx.window_id();
                         ToastStack::handle(ctx).update(ctx, |ts, ctx| {
                             ts.add_ephemeral_toast(
-                                DismissibleToast::default(localization::text_for_app(
-                                    ctx,
-                                    "terminal.input.toast.preparing_handoff",
-                                ))
+                                DismissibleToast::default(
+                                    "Preparing handoff — try again in a moment.".to_owned(),
+                                )
                                 .with_object_id("local-to-cloud-handoff-not-ready".to_owned()),
                                 window_id,
                                 ctx,
@@ -13420,22 +13576,22 @@ impl Input {
     /// Cancels the in-flight stream first so slash/skill paths don't trip the in-flight assertion.
     /// `is_for_same_conversation: true` keeps the conversation status `InProgress` so the warping
     /// indicator stays visible.
-    pub(crate) fn submit_queued_prompt(&mut self, prompt: String, ctx: &mut ViewContext<Self>) {
-        if let Some(conversation_id) = self
-            .ai_context_model
-            .as_ref(ctx)
-            .selected_conversation_id(ctx)
-        {
-            self.ai_controller.update(ctx, |controller, ctx| {
-                controller.cancel_conversation_progress(
-                    conversation_id,
-                    CancellationReason::FollowUpSubmitted {
-                        is_for_same_conversation: true,
-                    },
-                    ctx,
-                );
-            });
-        }
+    pub(crate) fn submit_queued_prompt(
+        &mut self,
+        prompt: String,
+        conversation_id: AIConversationId,
+        query_id: QueuedQueryId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.ai_controller.update(ctx, |controller, ctx| {
+            controller.cancel_conversation_progress(
+                conversation_id,
+                CancellationReason::FollowUpSubmitted {
+                    is_for_same_conversation: true,
+                },
+                ctx,
+            );
+        });
 
         let detected = self
             .slash_command_model
@@ -13455,14 +13611,13 @@ impl Input {
                     ctx,
                 )
             }
-            SlashCommandEntryState::SkillCommand(detected_skill) => {
-                self.execute_skill_command(
-                    detected_skill.reference,
-                    detected_skill.argument,
-                    /*is_queued_prompt*/ true,
-                    ctx,
-                )
-            }
+            SlashCommandEntryState::SkillCommand(detected_skill) => self.execute_skill_command(
+                detected_skill.reference,
+                detected_skill.argument,
+                Some(query_id),
+                Some(conversation_id),
+                ctx,
+            ),
             _ => false,
         };
 
@@ -13470,22 +13625,38 @@ impl Input {
             return;
         }
 
+        // A fired queued row always belongs to the existing conversation that finished, so we
+        // submit into that conversation directly rather than re-deriving from the current UI
+        // selection (which may point at a different conversation the user navigated to).
+        self.ai_controller.update(ctx, move |controller, ctx| {
+            controller.send_queued_user_query_in_conversation(
+                prompt,
+                conversation_id,
+                None,
+                query_id,
+                ctx,
+            );
+        });
+
+        ctx.emit(Event::ExecuteAIQuery);
+    }
+
+    /// Submits `prompt` immediately as a regular (non-queued) user query — the same controller
+    /// path `submit_ai_query` uses for a typed-and-entered prompt. Used by the `/queue`
+    /// not-in-progress fallback and the legacy pending-user-query submission paths, which are
+    /// immediate sends (not queued-row fires) and therefore reset their live staging.
+    pub(crate) fn submit_user_query_now(&mut self, prompt: String, ctx: &mut ViewContext<Self>) {
         if let Some(conversation_id) = self
             .ai_context_model
             .as_ref(ctx)
             .selected_conversation_id(ctx)
         {
             self.ai_controller.update(ctx, move |controller, ctx| {
-                controller.send_queued_user_query_in_conversation(
-                    prompt,
-                    conversation_id,
-                    None,
-                    ctx,
-                );
+                controller.send_user_query_in_conversation(prompt, conversation_id, None, ctx);
             });
         } else {
             self.ai_controller.update(ctx, move |controller, ctx| {
-                controller.send_queued_user_query_in_new_conversation(
+                controller.send_user_query_in_new_conversation(
                     prompt,
                     None,
                     EntrypointType::UserInitiated,
@@ -13506,6 +13677,8 @@ impl Input {
     pub(crate) fn submit_queued_prompt_for_active_pane(
         &mut self,
         prompt: String,
+        conversation_id: AIConversationId,
+        query_id: QueuedQueryId,
         ctx: &mut ViewContext<Self>,
     ) {
         // Cloud follow-up path: the cloud run has ended an execution and the next queued
@@ -13519,29 +13692,32 @@ impl Input {
                         .is_ready_for_cloud_followup_prompt()
                 });
         if is_ready_for_cloud_followup {
+            // Cloud follow-up does not support attachments; a queued row's attachments are dropped
+            // when the row is removed after dispatch.
+            let drops_attachments = !QueuedQueryModel::as_ref(ctx)
+                .attachments_for(conversation_id, query_id)
+                .is_empty();
+            if drops_attachments {
+                log::warn!(
+                    "Dropping attachments on a queued cloud follow-up prompt; cloud follow-up does not support attachments"
+                );
+            }
             ctx.emit(Event::SubmitCloudFollowup { prompt });
             return;
         }
 
         // Shared-session viewer path (covers an in-flight cloud run from the owner's client).
-        // Send the prompt straight to the sharer via Event::SendAgentPrompt — no buffer
-        // replace, no pending-attachment piggyback. When the user's editor is empty we
-        // also surface the standard `"<prompt> ◌"` loading affordance so the queued
-        // submission has visible feedback while the sharer ack flight is in flight; the
-        // `NetworkEvent::AgentPromptRequestInFlight` -> `unfreeze_and_clear_agent_input`
-        // hop will clear it once the sharer acknowledges receipt. If the user has typed
-        // something locally, we leave the buffer alone so their in-progress prompt is
-        // not clobbered.
+        // Send the prompt straight to the sharer via Event::SendAgentPrompt, carrying the queued
+        // row's own attachments (uploaded when supported). When the user's editor is empty we
+        // also surface the standard `"<prompt> ◌"` loading affordance so the queued submission has
+        // visible feedback while the sharer ack flight is in flight; the
+        // `NetworkEvent::AgentPromptRequestInFlight` -> `unfreeze_and_clear_agent_input` hop will
+        // clear it once the sharer acknowledges receipt. If the user has typed something locally,
+        // we leave the buffer alone so their in-progress prompt is not clobbered.
         if self.model.lock().shared_session_status().is_viewer() {
-            let server_conversation_token = self
-                .ai_context_model
-                .as_ref(ctx)
-                .selected_conversation_id(ctx)
-                .and_then(|id| {
-                    BlocklistAIHistoryModel::as_ref(ctx)
-                        .conversation(&id)
-                        .and_then(|conv| conv.server_conversation_token().cloned())
-                })
+            let server_conversation_token = BlocklistAIHistoryModel::as_ref(ctx)
+                .conversation(&conversation_id)
+                .and_then(|conv| conv.server_conversation_token().cloned())
                 .and_then(|token| {
                     token
                         .as_str()
@@ -13549,19 +13725,42 @@ impl Input {
                         .ok()
                         .map(ServerConversationToken::from_uuid)
                 });
+
+            // Split the firing row's stored attachments into images/files for upload.
+            let mut images: Vec<ImageContext> = Vec::new();
+            let mut files: Vec<PendingFile> = Vec::new();
+            for attachment in
+                QueuedQueryModel::as_ref(ctx).attachments_for(conversation_id, query_id)
+            {
+                match attachment {
+                    PendingAttachment::Image(image) => images.push(image.clone()),
+                    PendingAttachment::File(file) => files.push(file.clone()),
+                }
+            }
+
             if self.editor.as_ref(ctx).buffer_text(ctx).is_empty() {
                 self.freeze_input_in_loading_state_with_text(&prompt, ctx);
             }
-            ctx.emit(Event::SendAgentPrompt {
+            let queued_query_retry = QueuedQueryModel::as_ref(ctx)
+                .queue(conversation_id)
+                .iter()
+                .enumerate()
+                .find(|(_, query)| query.id() == query_id)
+                .map(|(index, query)| (conversation_id, index, query.clone()));
+            self.upload_and_send_viewer_prompt(
                 server_conversation_token,
                 prompt,
-                attachments: vec![],
-            });
+                vec![],
+                images,
+                files,
+                queued_query_retry,
+                ctx,
+            );
             return;
         }
 
         // Local Agent Mode path.
-        self.submit_queued_prompt(prompt, ctx);
+        self.submit_queued_prompt(prompt, conversation_id, query_id, ctx);
     }
 
     /// Checks whether the current input should be queued instead of executed.
@@ -13578,7 +13777,10 @@ impl Input {
             return false;
         }
 
-        if !self.ai_input_model.as_ref(ctx).is_ai_input_enabled() {
+        // A shell-mode submission queues as a command; an AI-mode submission queues as a prompt.
+        // Command queueing is gated on the V2 surface.
+        let is_command = !self.ai_input_model.as_ref(ctx).is_ai_input_enabled();
+        if is_command && !FeatureFlag::QueuedPromptsV2.is_enabled() {
             return false;
         }
 
@@ -13602,13 +13804,16 @@ impl Input {
             return false;
         }
 
-        let should_queue = BlocklistAIHistoryModel::as_ref(ctx)
+        let conversation_in_progress = BlocklistAIHistoryModel::as_ref(ctx)
             .conversation(&conversation_id)
             .is_some_and(|c| {
                 !c.is_empty() && (c.status().is_in_progress() || c.status().is_blocked())
             });
-
-        if !should_queue {
+        // While a drained queued command is running the agent is idle, but the queue must keep
+        // accepting rows so FIFO order is preserved (PRODUCT §14).
+        let command_in_flight =
+            QueuedQueryModel::as_ref(ctx).has_command_in_flight(conversation_id);
+        if !conversation_in_progress && !command_in_flight {
             return false;
         }
 
@@ -13617,10 +13822,12 @@ impl Input {
             return false;
         }
 
-        // If the input is itself a /queue command, unwrap the argument so we
-        // queue "fix the tests" directly instead of "/queue fix the tests"
-        // (which would double-hop through the /queue handler on re-submission).
-        let prompt = if let SlashCommandEntryState::SlashCommand(ref detected) = self
+        // If an AI-mode input is itself a /queue command, unwrap the argument so we queue
+        // "fix the tests" directly instead of "/queue fix the tests" (which would double-hop
+        // through the /queue handler on re-submission). A shell command never matches /queue.
+        let prompt = if is_command {
+            prompt
+        } else if let SlashCommandEntryState::SlashCommand(ref detected) = self
             .slash_command_model
             .as_ref(ctx)
             .detect_command(&prompt, ctx)
@@ -13646,12 +13853,21 @@ impl Input {
             editor.clear_buffer(ctx);
         });
 
+        // Commands carry no attachments; only prompts consume the pending attachments.
+        let query = if is_command {
+            QueuedQuery::new_command(prompt, QueuedQueryOrigin::AutoQueueToggle)
+        } else {
+            let attachments = self.ai_context_model.update(ctx, |context_model, ctx| {
+                context_model.take_pending_attachments(ctx)
+            });
+            QueuedQuery::new_with_attachments(
+                prompt,
+                QueuedQueryOrigin::AutoQueueToggle,
+                attachments,
+            )
+        };
         QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-            model.append(
-                conversation_id,
-                QueuedQuery::new(prompt, QueuedQueryOrigin::AutoQueueToggle),
-                ctx,
-            );
+            model.append(conversation_id, query, ctx);
         });
 
         true
@@ -13701,13 +13917,17 @@ impl Input {
         self.editor.update(ctx, |editor, ctx| {
             editor.clear_buffer(ctx);
         });
-        self.ai_context_model.update(ctx, |context_model, ctx| {
-            context_model.clear_pending_attachments(ctx);
+        let attachments = self.ai_context_model.update(ctx, |context_model, ctx| {
+            context_model.take_pending_attachments(ctx)
         });
         QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
             model.append(
                 conversation_id,
-                QueuedQuery::new(prompt, QueuedQueryOrigin::AutoQueueToggle),
+                QueuedQuery::new_with_attachments(
+                    prompt,
+                    QueuedQueryOrigin::AutoQueueToggle,
+                    attachments,
+                ),
                 ctx,
             );
         });
@@ -13741,10 +13961,9 @@ impl Input {
                 let window_id = ctx.window_id();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     toast_stack.add_ephemeral_toast(
-                        DismissibleToast::error(localization::text_for_app(
-                            ctx,
-                            "terminal.input.toast.read_only_viewer",
-                        )),
+                        DismissibleToast::error(
+                            "Cannot send queries as a read-only viewer.".to_string(),
+                        ),
                         window_id,
                         ctx,
                     );
@@ -13923,11 +14142,7 @@ impl Input {
                     .map(ServerConversationToken::from_uuid)
             });
 
-        let ambient_agent_task_id = self
-            .ambient_agent_view_model()
-            .and_then(|ambient_agent_model| ambient_agent_model.as_ref(ctx).task_id());
-
-        // Collect attachments from ai_context_model
+        // Collect block/selected-text references from the context model.
         let attachments: Vec<AgentAttachment> = self
             .ai_context_model
             .as_ref(ctx)
@@ -13961,7 +14176,37 @@ impl Input {
             .cloned()
             .collect();
 
-        let has_uploads = (!pending_images.is_empty() || !pending_files.is_empty())
+        self.upload_and_send_viewer_prompt(
+            server_conversation_token,
+            prompt,
+            attachments,
+            pending_images,
+            pending_files,
+            None,
+            ctx,
+        );
+
+        true
+    }
+
+    /// Uploads `images`/`files` (when the cloud pane supports it) and emits `Event::SendAgentPrompt`
+    /// with the resulting attachments. Shared by the immediate viewer submission and the queued
+    /// viewer drain so both go through the identical upload-then-send path.
+    #[allow(clippy::too_many_arguments)]
+    fn upload_and_send_viewer_prompt(
+        &mut self,
+        server_conversation_token: Option<ServerConversationToken>,
+        prompt: String,
+        base_attachments: Vec<AgentAttachment>,
+        images: Vec<ImageContext>,
+        files: Vec<PendingFile>,
+        queued_query_retry: Option<(AIConversationId, usize, QueuedQuery)>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let ambient_agent_task_id = self
+            .ambient_agent_view_model()
+            .and_then(|ambient_agent_model| ambient_agent_model.as_ref(ctx).task_id());
+        let has_uploads = (!images.is_empty() || !files.is_empty())
             && FeatureFlag::CloudModeImageContext.is_enabled();
 
         if let Some(task_id) = ambient_agent_task_id.filter(|_| has_uploads) {
@@ -13970,28 +14215,28 @@ impl Input {
                 task_id,
                 server_conversation_token,
                 prompt,
-                attachments,
-                &pending_images,
-                &pending_files,
+                base_attachments,
+                &images,
+                &files,
+                queued_query_retry,
                 ctx,
             );
         } else {
             // No files to upload, send prompt immediately
-            if !pending_images.is_empty() || !pending_files.is_empty() {
+            if !images.is_empty() || !files.is_empty() {
                 log::warn!("Cannot upload files: no task_id available");
             }
             ctx.emit(Event::SendAgentPrompt {
                 server_conversation_token,
                 prompt,
-                attachments,
+                attachments: base_attachments,
             });
         }
-
-        true
     }
 
     /// Uploads image and file attachments to GCS via presigned URLs, then emits `SendAgentPrompt`
     /// with the resulting `FileReference` attachments appended.
+    #[allow(clippy::too_many_arguments)]
     fn upload_files_then_send_prompt(
         task_id: crate::ai::ambient_agents::AmbientAgentTaskId,
         server_conversation_token: Option<
@@ -14001,6 +14246,7 @@ impl Input {
         base_attachments: Vec<AgentAttachment>,
         pending_images: &[crate::ai::agent::ImageContext],
         pending_files: &[crate::ai::blocklist::PendingFile],
+        queued_query_retry: Option<(AIConversationId, usize, QueuedQuery)>,
         ctx: &mut ViewContext<Self>,
     ) {
         let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
@@ -14107,29 +14353,39 @@ impl Input {
                 Some(uploaded)
             },
             move |input, maybe_uploaded, ctx| {
-                let Some(uploaded_files) = maybe_uploaded else {
-                    // Prepare request failed (e.g. attachment limit exceeded).
-                    // Keep pending attachments so the user can retry, unfreeze input,
-                    // and show an error toast.
-                    input.unfreeze_and_clear_agent_input(ctx);
-                    let window_id = ctx.window_id();
-                    ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                        toast_stack.add_ephemeral_toast(
-                            DismissibleToast::error(localization::text_for_app(
+                let is_queued_prompt = queued_query_retry.is_some();
+                let uploaded_files = match maybe_uploaded {
+                    Some(uploaded_files) => uploaded_files,
+                    None => {
+                        if let Some((conversation_id, insert_index, query)) = queued_query_retry {
+                            QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                                model.restore_fired_row(conversation_id, insert_index, query, ctx);
+                            });
+                        }
+                        // Prepare request failed (e.g. attachment limit exceeded).
+                        // Keep pending attachments so the user can retry, unfreeze input,
+                        // and show an error toast.
+                        input.unfreeze_and_clear_agent_input(ctx);
+                        let window_id = ctx.window_id();
+                        ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                            toast_stack.add_ephemeral_toast(
+                                DismissibleToast::error(
+                                    "Too many attachments for this conversation.".to_string(),
+                                ),
+                                window_id,
                                 ctx,
-                                "terminal.input.toast.too_many_attachments",
-                            )),
-                            window_id,
-                            ctx,
-                        );
-                    });
-                    return;
+                            );
+                        });
+                        return;
+                    }
                 };
 
-                // Upload succeeded — clear pending attachments now.
-                input.ai_context_model.update(ctx, |context_model, ctx| {
-                    context_model.clear_pending_attachments(ctx);
-                });
+                if !is_queued_prompt {
+                    // Upload succeeded — clear pending attachments now.
+                    input.ai_context_model.update(ctx, |context_model, ctx| {
+                        context_model.clear_pending_attachments(ctx);
+                    });
+                }
 
                 let mut all_attachments = base_attachments;
                 all_attachments.extend(uploaded_files);
@@ -14483,8 +14739,9 @@ impl Input {
                     ctx,
                 );
             // Only clear the input buffer for user-executed commands, not agent-executed ones.
-            let should_clear_buffer =
-                !user_block.was_part_of_agent_interaction && !cloud_setup_pre_first_exchange;
+            let should_clear_buffer = !user_block.was_part_of_agent_interaction
+                && !cloud_setup_pre_first_exchange
+                && !self.has_queued_command_in_flight(ctx);
             let latest_block_id = self.model.lock().block_list().active_block_id().clone();
             let input_contents_before_prompt_chip_command =
                 self.input_contents_before_prompt_chip_command.take();
@@ -14936,16 +15193,12 @@ impl Input {
         banner: Box<dyn Element>,
         is_compact_mode: bool,
         input_mode: InputMode,
-        appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
-        let constrained_banner = ConstrainedBox::new(banner)
-            .with_height(2. * appearance.line_height_ratio() * appearance.monospace_font_size())
-            .finish();
         let should_use_udi_spacing = self.should_show_universal_developer_input(app)
             || (FeatureFlag::AgentView.is_enabled()
                 && self.agent_view_controller.as_ref(app).is_active());
-        let mut container: Container = Container::new(constrained_banner);
+        let mut container: Container = Container::new(banner);
         let (suggestion_to_prompt_padding, suggestion_to_input_border_padding) =
             if should_use_udi_spacing {
                 (0., 0.)
@@ -14970,7 +15223,6 @@ impl Input {
     /// Renders a banner that should stay next to the input box.
     fn render_input_banner(
         &self,
-        appearance: &Appearance,
         app: &AppContext,
         input_mode: InputMode,
         is_compact_mode: bool,
@@ -14986,7 +15238,6 @@ impl Input {
                 prompt_suggestions_banner,
                 is_compact_mode,
                 input_mode,
-                appearance,
                 app,
             ))
         } else {
@@ -15328,14 +15579,14 @@ impl TypedActionView for Input {
     fn action_accessibility_contents(
         &mut self,
         action: &InputAction,
-        ctx: &mut ViewContext<Self>,
+        _: &mut ViewContext<Self>,
     ) -> ActionAccessibilityContent {
         match action {
             InputAction::FocusInputBox => {
                 ActionAccessibilityContent::Custom(AccessibilityContent::new(
-                    localization::text_for_app(ctx, INPUT_A11Y_LABEL_KEY),
+                    INPUT_A11Y_LABEL,
                     // TODO (a11y) use bindings from user settings
-                    localization::text_for_app(ctx, INPUT_A11Y_HELPER_KEY),
+                    INPUT_A11Y_HELPER,
                     WarpA11yRole::TextareaRole,
                 ))
             }
@@ -15458,7 +15709,7 @@ impl TypedActionView for Input {
                 };
                 self.select_slash_command(command, SlashCommandTrigger::keybinding(), ctx);
             }
-            InputAction::StartNewAgentConversation => {
+            InputAction::StartNewAgentConversation { origin } => {
                 // Block starting a new conversation if the agent is in control of a long-running command
                 if !self
                     .ai_context_model
@@ -15468,10 +15719,9 @@ impl TypedActionView for Input {
                     let window_id = ctx.window_id();
                     ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                         toast_stack.add_ephemeral_toast(
-                            DismissibleToast::error(localization::text_for_app(
-                                ctx,
-                                "terminal.input.toast.cannot_start_conversation_agent_monitoring",
-                            )),
+                            DismissibleToast::error(
+                                "Cannot start a new conversation while agent is monitoring a command.".to_string()
+                            ),
                             window_id,
                             ctx,
                         );
@@ -15480,27 +15730,28 @@ impl TypedActionView for Input {
                 }
 
                 if FeatureFlag::AgentView.is_enabled() {
-                    if let Err(e) = self.agent_view_controller.update(ctx, |controller, ctx| {
-                        controller.try_enter_agent_view(
-                            None,
-                            AgentViewEntryOrigin::Input {
-                                was_prompt_autodetected: false,
-                            },
-                            ctx,
-                        )
-                    }) {
-                        log::warn!("Failed to start new agent conversation from zero-state: {e:?}");
+                    if let AgentViewEntryOrigin::Keybinding(keystroke) = origin {
+                        let should_start_new_conversation =
+                            self.agent_view_controller.update(ctx, |controller, ctx| {
+                                controller.should_start_new_conversation_for_keystroke(
+                                    keystroke.clone(),
+                                    ctx,
+                                )
+                            });
+                        if !should_start_new_conversation {
+                            return;
+                        }
                     }
+                    ctx.emit(Event::EnterAgentView {
+                        initial_prompt: None,
+                        conversation_id: None,
+                        origin: origin.clone(),
+                    });
                 } else if self.should_show_universal_developer_input(ctx) {
                     // Clear follow-up state (start a fresh conversation)
                     self.ai_context_model.update(ctx, |ai_context_model, ctx| {
-                        ai_context_model.set_pending_query_state_for_new_conversation(
-                            // This is a placeholder origin, this codepath is dead when AgentView is enabled.
-                            AgentViewEntryOrigin::Input {
-                                was_prompt_autodetected: false,
-                            },
-                            ctx,
-                        );
+                        ai_context_model
+                            .set_pending_query_state_for_new_conversation(origin.clone(), ctx);
                     });
                     self.enter_ai_mode(
                         Some(InputTypeAutoDetectionSource::StartNewConversation),
@@ -15549,11 +15800,11 @@ impl View for Input {
         "Input"
     }
 
-    fn accessibility_contents(&self, ctx: &AppContext) -> Option<AccessibilityContent> {
+    fn accessibility_contents(&self, _: &AppContext) -> Option<AccessibilityContent> {
         Some(AccessibilityContent::new(
-            localization::text_for_app(ctx, INPUT_A11Y_LABEL_KEY),
+            INPUT_A11Y_LABEL,
             // TODO (a11y) use bindings from user settings
-            localization::text_for_app(ctx, INPUT_A11Y_HELPER_KEY),
+            INPUT_A11Y_HELPER,
             WarpA11yRole::TextareaRole,
         ))
     }

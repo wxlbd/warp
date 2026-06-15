@@ -104,13 +104,23 @@ pub fn classify_driver_error(error: &AgentDriverError) -> (AgentTaskState, TaskS
                 PlatformErrorCode::EnvironmentSetupFailed,
             ),
         ),
-        AgentDriverError::MCPStartupFailed => (
-            AgentTaskState::Failed,
-            TaskStatusUpdate::with_error_code(
-                text("agent_sdk.driver.error_classification.mcp_startup_failed"),
-                PlatformErrorCode::EnvironmentSetupFailed,
-            ),
-        ),
+        AgentDriverError::MCPStartupFailed { details } => {
+            let server_lines = details
+                .iter()
+                .map(|detail| format!("- {detail}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (
+                AgentTaskState::Failed,
+                TaskStatusUpdate::with_error_code(
+                    text_with_args(
+                        "agent_sdk.driver.error_classification.mcp_startup_failed_with_details",
+                        &[("server_lines", &server_lines)],
+                    ),
+                    PlatformErrorCode::EnvironmentSetupFailed,
+                ),
+            )
+        }
         AgentDriverError::MCPJsonParseError(msg) => (
             AgentTaskState::Failed,
             TaskStatusUpdate::with_error_code(

@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::ops::Range;
@@ -101,9 +100,9 @@ use crate::code_review::diff_state::{
 use crate::code_review::editor_state::CodeReviewEditorState;
 use crate::code_review::find_model::CodeReviewFindModel;
 #[cfg(feature = "local_fs")]
-use crate::code_review::git_status_update::{
-    GitRepoStatusEvent, GitRepoStatusModel, GitStatusUpdateModel,
-};
+use crate::code_review::git_repo_model::{GitRepoModels, GitRepoStatusEvent, GitRepoStatusModel};
+#[cfg(feature = "local_fs")]
+use crate::code_review::github_repo_model::{GitHubRepoEvent, GitHubRepoModel};
 use crate::code_review::hidden_lines::calculate_hidden_lines;
 #[cfg(feature = "local_fs")]
 use crate::code_review::telemetry_event::DiffSetContextScope;
@@ -156,6 +155,10 @@ use crate::workspace::{ToastStack, Workspace, WorkspaceAction};
 #[cfg(feature = "local_fs")]
 use crate::TelemetryEvent;
 
+pub(crate) fn code_review_text(app: &AppContext, key: &str) -> String {
+    crate::localization::text_for_app(app, key)
+}
+
 pub struct CodeReviewHeaderFields {
     pub is_in_split_pane: bool,
     pub diff_state_model: ModelHandle<DiffStateModel>,
@@ -183,7 +186,6 @@ pub struct CodeReviewCommentDebugState {
 /// Renders a file navigation button (sidebar toggle) that can be reused across views.
 pub fn render_file_navigation_button<F>(
     appearance: &Appearance,
-    app: &AppContext,
     is_sidebar_expanded: bool,
     mouse_state: MouseStateHandle,
     on_click: F,
@@ -195,11 +197,6 @@ where
     let icon_color = appearance
         .theme()
         .sub_text_color(appearance.theme().background());
-    let tooltip = if is_sidebar_expanded {
-        code_review_text(app, "code_review.action.hide_file_navigation")
-    } else {
-        code_review_text(app, "code_review.action.show_file_navigation")
-    };
     let button = icon_button_with_color(
         appearance,
         if is_sidebar_expanded {
@@ -211,7 +208,16 @@ where
         mouse_state,
         icon_color,
     )
-    .with_tooltip(move || ui_builder.tool_tip(tooltip.clone()).build().finish())
+    .with_tooltip(move || {
+        ui_builder
+            .tool_tip(if is_sidebar_expanded {
+                "Hide file navigation".to_owned()
+            } else {
+                "Show file navigation".to_owned()
+            })
+            .build()
+            .finish()
+    })
     .with_tooltip_position(warpui::ui_components::button::ButtonTooltipPosition::BelowLeft)
     .build()
     .on_click(move |ctx: &mut warpui::EventContext<'_>, _, _| {
@@ -266,14 +272,9 @@ const CODE_REVIEW_EDITOR_LINE_HEIGHT_RATIO: f32 = 1.4;
 const COMMENT_EDITOR_SCROLL_BUFFER: f32 = 200.0;
 
 pub const CODE_REVIEW_TOOLTIP_KEY: &str = "code_review.tooltip.view_changes";
-
-pub(crate) fn code_review_text(app: &AppContext, key: &str) -> String {
-    crate::localization::text_for_app(app, key)
-}
-
-fn code_review_text_with_args(app: &AppContext, key: &str, args: &[(&str, &str)]) -> String {
-    crate::localization::text_for_app_with_args(app, key, args)
-}
+const REMOTE_TEXT: &str = "Diffs only work for local workspaces.";
+const DISABLED_TEXT: &str = "Diffs only work for git repositories.";
+const WSL_TEXT: &str = "Diffs don't currently work in WSL.";
 
 pub fn get_discard_button_disabled_tooltip(
     git_operation_blocked: bool,
@@ -290,13 +291,13 @@ pub fn get_discard_button_disabled_tooltip(
 /// live shortcut for `code_review:toggle_file_navigation` when one is bound.
 fn file_nav_button_tooltip(is_sidebar_expanded: bool, app: &AppContext) -> String {
     let label = if is_sidebar_expanded {
-        code_review_text(app, "code_review.action.hide_file_navigation")
+        "Hide file navigation"
     } else {
-        code_review_text(app, "code_review.action.show_file_navigation")
+        "Show file navigation"
     };
     match keybinding_name_to_display_string("code_review:toggle_file_navigation", app) {
         Some(shortcut) => format!("{label} ({shortcut})"),
-        None => label,
+        None => label.to_string(),
     }
 }
 
@@ -500,7 +501,7 @@ impl DiscardOperationType {
                 app,
                 "code_review.discard.description.file_uncommitted",
             )),
-            DiscardOperationType::AllChangesAgainstBranch(_) => Some(code_review_text(
+            DiscardOperationType::AllChangesAgainstBranch(None) => Some(code_review_text(
                 app,
                 "code_review.discard.description.all_changes",
             )),
@@ -508,8 +509,12 @@ impl DiscardOperationType {
                 app,
                 "code_review.discard.description.file_changes_main",
             )),
+            DiscardOperationType::AllChangesAgainstBranch(Some(_)) => Some(code_review_text(
+                app,
+                "code_review.discard.description.all_changes",
+            )),
             DiscardOperationType::FileChangesAgainstBranch(Some(branch)) => {
-                Some(code_review_text_with_args(
+                Some(crate::localization::text_for_app_with_args(
                     app,
                     "code_review.discard.description.file_changes_branch",
                     &[("branch", branch)],
@@ -610,6 +615,28 @@ struct RelocateCommentsResult {
     fallback_count: usize,
 }
 
+/// Resolves which terminal code review actions should target.
+///
+/// Injected by the hosting view (`RightPanelView`) so target selection is
+/// late-bound: actions land in the conversation the user is currently focused
+/// on rather than a terminal handle captured when the view was constructed.
+pub trait ReviewActionTargetProvider {
+    /// The terminal that should receive attach-as-context payloads. Uses the
+    /// same selection as review comment submission (focused > repo-preferred >
+    /// any available), falling back to the focused terminal inside `repo_path`
+    /// when none are available so per-action handling for busy terminals still
+    /// targets the focused conversation.
+    fn attach_terminal(
+        &self,
+        repo_path: &LocalOrRemotePath,
+        app: &AppContext,
+    ) -> Option<ViewHandle<TerminalView>>;
+
+    /// The focused (or active) terminal of the hosting pane group, regardless
+    /// of repo. Used for environment checks and terminal-targeted actions.
+    fn focused_terminal(&self, app: &AppContext) -> Option<ViewHandle<TerminalView>>;
+}
+
 /// State shared among the entire code review view.
 pub struct CodeReviewView {
     active_repo: Option<RepositoryState>,
@@ -664,7 +691,7 @@ pub struct CodeReviewView {
     diff_state_model: ModelHandle<DiffStateModel>,
     diff_selector: ViewHandle<DiffSelector>,
     header: CodeReviewHeader,
-    terminal_view: Option<WeakViewHandle<TerminalView>>,
+    action_target_provider: Option<Box<dyn ReviewActionTargetProvider>>,
     position_id_prefix: String,
     /// Whether the view is currently open (subscribed to diff state model).
     is_open: bool,
@@ -675,6 +702,9 @@ pub struct CodeReviewView {
     /// Per-repo git status model for the current repository, if any.
     #[cfg(feature = "local_fs")]
     git_repo_status: Option<ModelHandle<GitRepoStatusModel>>,
+    /// Per-repo GitHub-info model for the current repository, if any.
+    #[cfg(feature = "local_fs")]
+    github_repo_model: Option<ModelHandle<GitHubRepoModel>>,
 }
 
 impl CodeReviewView {
@@ -707,9 +737,7 @@ impl CodeReviewView {
     /// RPCs so the request rides the connection that's actually showing the
     /// review; `None` falls back to any connected session for the host.
     fn preferred_review_session(&self, ctx: &ViewContext<Self>) -> Option<SessionId> {
-        self.terminal_view
-            .as_ref()
-            .and_then(|tv| tv.upgrade(ctx))
+        self.focused_terminal(ctx)
             .and_then(|tv| tv.as_ref(ctx).active_block_session_id())
     }
 
@@ -723,7 +751,19 @@ impl CodeReviewView {
 
         ctx.subscribe_to_model(&self.diff_state_model, Self::handle_diff_state_model_event);
         #[cfg(feature = "local_fs")]
-        self.subscribe_to_git_repo_status(ctx);
+        {
+            self.subscribe_to_git_repo_status_model(ctx);
+            self.subscribe_to_github_repo_model(ctx);
+        }
+        // Remote repos kick off a separate `GetPrInfo` fetch via the remote server manager.
+        // TODO: source the info from the `GitRepoStatusModel` as done for local repos.
+        if FeatureFlag::GitOperationsInCodeReview.is_enabled()
+            && self.repo_path().is_some_and(LocalOrRemotePath::is_remote)
+        {
+            self.diff_state_model.update(ctx, |model, ctx| {
+                model.fetch_pr_info(ctx);
+            });
+        }
         if self.repo_path().is_some() {
             self.fetch_branches_and_setup_dropdown(ctx);
         }
@@ -789,7 +829,10 @@ impl CodeReviewView {
 
         ctx.unsubscribe_to_model(&self.diff_state_model);
         #[cfg(feature = "local_fs")]
-        self.unsubscribe_from_git_repo_status(ctx);
+        {
+            self.unsubscribe_from_git_repo_status_model(ctx);
+            self.unsubscribe_from_github_repo_model(ctx);
+        }
 
         self.code_review_footer = None;
 
@@ -1122,7 +1165,7 @@ impl CodeReviewView {
         repo_path: Option<LocalOrRemotePath>,
         diff_state_model: ModelHandle<DiffStateModel>,
         comment_batch_model: Option<ModelHandle<ReviewCommentBatch>>,
-        terminal_view: Option<WeakViewHandle<TerminalView>>,
+        action_target_provider: Option<Box<dyn ReviewActionTargetProvider>>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         // TODO(asweet): Migrate subscription and event handling of diff_state_model to RepositoryState
@@ -1138,13 +1181,10 @@ impl CodeReviewView {
             .map(char::from)
             .collect();
 
-        let maximize_button = ctx.add_typed_action_view(move |ctx| {
+        let maximize_button = ctx.add_typed_action_view(move |_| {
             // Since the view isn't part of a pane group yet, default to not-maximized. The button will be updated
             //when focus state changes.
-            let (icon, tooltip_text) = (
-                Icon::Maximize,
-                code_review_text(ctx, "code_review.action.maximize"),
-            );
+            let (icon, tooltip_text) = (Icon::Maximize, "Maximize");
 
             ActionButton::new("", NakedTheme)
                 .with_icon(icon)
@@ -1363,7 +1403,7 @@ impl CodeReviewView {
             position_id_prefix: random_str,
             viewported_list_state: list_state,
             scroll_state: ScrollStateHandle::default(),
-            terminal_view,
+            action_target_provider,
             window_id: ctx.window_id(),
             undo_action_button,
             last_revert: None,
@@ -1390,6 +1430,8 @@ impl CodeReviewView {
             git_dialog: None,
             #[cfg(feature = "local_fs")]
             git_repo_status: None,
+            #[cfg(feature = "local_fs")]
+            github_repo_model: None,
         };
         view.set_active_repo_comment_model(comment_batch_model, ctx);
         if has_repo {
@@ -1403,10 +1445,6 @@ impl CodeReviewView {
         }
 
         view
-    }
-
-    pub fn set_terminal_view(&mut self, terminal_view: WeakViewHandle<TerminalView>) {
-        self.terminal_view = Some(terminal_view);
     }
 
     pub fn set_review_destination(
@@ -1451,15 +1489,9 @@ impl CodeReviewView {
 
         let is_maximized = focus_handle.is_maximized(ctx);
         let (icon, tooltip) = if is_maximized {
-            (
-                Icon::Minimize,
-                code_review_text(ctx, "code_review.action.restore"),
-            )
+            (Icon::Minimize, "Restore")
         } else {
-            (
-                Icon::Maximize,
-                code_review_text(ctx, "code_review.action.maximize"),
-            )
+            (Icon::Maximize, "Maximize")
         };
 
         self.maximize_button.update(ctx, |button, ctx| {
@@ -1532,7 +1564,7 @@ impl CodeReviewView {
 
         // 1. Always add "Uncommitted changes" first.
         targets.push(DiffTarget::new(
-            code_review_text(ctx, "code_review.diff_target.uncommitted_changes"),
+            "Uncommitted changes",
             DiffMode::Head,
             matches!(current_mode, DiffMode::Head),
         ));
@@ -2352,6 +2384,17 @@ impl CodeReviewView {
             DiffStateModelEvent::CurrentBranchChanged => {
                 self.fetch_branches_and_setup_dropdown(ctx);
                 self.update_diff_selector_selection(ctx);
+                // PR info is branch-specific. Local repos re-fetch automatically
+                // via `GitRepoStatusModel` (it keys off branch changes); remote
+                // repos must re-issue `GetPrInfo` here, since the diff-state
+                // sync doesn't carry PR info.
+                if FeatureFlag::GitOperationsInCodeReview.is_enabled()
+                    && self.repo_path().is_some_and(LocalOrRemotePath::is_remote)
+                {
+                    self.diff_state_model.update(ctx, |model, ctx| {
+                        model.fetch_pr_info(ctx);
+                    });
+                }
             }
             DiffStateModelEvent::NewDiffsComputed {
                 diffs,
@@ -2409,6 +2452,11 @@ impl CodeReviewView {
                     repo.available_branches = branches.clone();
                 }
                 self.update_diff_selector_selection(ctx);
+            }
+            DiffStateModelEvent::GitOpCompleted(_)
+            | DiffStateModelEvent::CommitMessageGenerated(_)
+            | DiffStateModelEvent::BranchCommittedFilesReceived(_) => {
+                // Handled by GitDialog's own subscription.
             }
         }
     }
@@ -2876,9 +2924,19 @@ impl CodeReviewView {
         )
     }
 
-    /// Get the terminal view for the current repo. Returns None if no repo or no terminal.
-    pub fn terminal_view(&self, app: &AppContext) -> Option<ViewHandle<TerminalView>> {
-        self.terminal_view.as_ref().and_then(|tv| tv.upgrade(app))
+    /// The terminal that attach-as-context actions should target, resolved at
+    /// action time for the current repo. Returns None if no repo, no provider,
+    /// or no suitable terminal.
+    fn attach_target_terminal(&self, app: &AppContext) -> Option<ViewHandle<TerminalView>> {
+        let repo_path = self.repo_path()?;
+        self.action_target_provider
+            .as_ref()?
+            .attach_terminal(repo_path, app)
+    }
+
+    /// The focused terminal of the hosting pane group, if any.
+    fn focused_terminal(&self, app: &AppContext) -> Option<ViewHandle<TerminalView>> {
+        self.action_target_provider.as_ref()?.focused_terminal(app)
     }
 
     fn diff_state(&self, app: &AppContext) -> DiffState {
@@ -2901,7 +2959,7 @@ impl CodeReviewView {
 
     #[cfg(not(target_family = "wasm"))]
     fn session_env(&self, app: &AppContext) -> Option<GitSessionState> {
-        let terminal_view = self.terminal_view.as_ref()?.upgrade(app)?;
+        let terminal_view = self.focused_terminal(app)?;
         terminal_view.read(app, |terminal, ctx| {
             let session = terminal
                 .active_block_session_id()
@@ -2930,7 +2988,7 @@ impl CodeReviewView {
         _app: &AppContext,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
-        Self::render_wsl_state(_app, appearance, None)
+        Self::render_wsl_state(appearance, None)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -2947,18 +3005,18 @@ impl CodeReviewView {
                 // No "Open repository" CTA when the session is remote — the
                 // button navigates to a local folder, which is not meaningful
                 // in a remote session.
-                Self::render_remote_state(app, appearance, None)
+                Self::render_remote_state(appearance, None)
             }
             Some(GitSessionState {
                 enablement: CodingPanelEnablementState::UnsupportedSession,
-            }) => Self::render_wsl_state(app, appearance, open_repo_button()),
+            }) => Self::render_wsl_state(appearance, open_repo_button()),
             None
             | Some(GitSessionState {
                 enablement:
                     CodingPanelEnablementState::Enabled
                     | CodingPanelEnablementState::PendingRemoteSession
                     | CodingPanelEnablementState::Disabled,
-            }) => Self::render_not_repo_state(app, appearance, open_repo_button()),
+            }) => Self::render_not_repo_state(appearance, open_repo_button()),
         }
     }
 
@@ -3090,7 +3148,7 @@ impl CodeReviewView {
                 )
                 .with_selection_as_context(Box::new(move |_, app| {
                     self_handle.upgrade(app).and_then(|code_review_view| {
-                        code_review_view.as_ref(app).terminal_view(app)
+                        code_review_view.as_ref(app).attach_target_terminal(app)
                     })
                 }));
 
@@ -3183,7 +3241,7 @@ impl CodeReviewView {
                     local_code_view =
                         local_code_view.with_selection_as_context(Box::new(move |_, app| {
                             self_handle.upgrade(app).and_then(|code_review_view| {
-                                code_review_view.as_ref(app).terminal_view(app)
+                                code_review_view.as_ref(app).attach_target_terminal(app)
                             })
                         }));
                 }
@@ -3702,9 +3760,10 @@ impl CodeReviewView {
         });
     }
 
-    fn render_placeholder_header(appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
+    fn render_placeholder_header(appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
 
+        let header_text = "Loading open changes...";
         let loading_icon = Icon::Loading
             .to_warpui_icon(warp_core::ui::theme::Fill::Solid(
                 internal_colors::neutral_6(theme),
@@ -3727,7 +3786,7 @@ impl CodeReviewView {
         flex.add_child(
             Container::new(
                 Text::new(
-                    code_review_text(app, "code_review.state.loading_open_changes"),
+                    header_text,
                     appearance.ui_font_family(),
                     appearance.ui_font_size(),
                 )
@@ -3741,7 +3800,7 @@ impl CodeReviewView {
     }
 
     /// Renders the loading state
-    pub fn render_loading_state(appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
+    pub fn render_loading_state(appearance: &Appearance) -> Box<dyn Element> {
         let placeholder = (0..4).map(|_| {
             Shrinkable::new(
                 1.,
@@ -3754,7 +3813,7 @@ impl CodeReviewView {
         Container::new(
             Flex::column()
                 .with_child(
-                    Container::new(CodeReviewView::render_placeholder_header(appearance, app))
+                    Container::new(CodeReviewView::render_placeholder_header(appearance))
                         .with_padding_bottom(12.)
                         .finish(),
                 )
@@ -3833,12 +3892,7 @@ impl CodeReviewView {
         .finish()
     }
 
-    fn render_error_state(
-        &self,
-        error: &str,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
+    fn render_error_state(&self, error: &str, appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
 
         let main_column = Flex::column()
@@ -3863,7 +3917,7 @@ impl CodeReviewView {
             )
             .with_child(
                 Text::new(
-                    code_review_text(app, "code_review.state.error_loading_diffs"),
+                    "Error loading diffs",
                     appearance.ui_font_family(),
                     appearance.ui_font_size() + 2.,
                 )
@@ -3906,7 +3960,7 @@ impl CodeReviewView {
                         )
                         .with_text_and_icon_label(TextAndIcon::new(
                             TextAndIconAlignment::IconFirst,
-                            format!(" {}", code_review_text(app, "code_review.action.retry")),
+                            " Retry".to_string(),
                             Icon::Refresh.to_warpui_icon(warp_core::ui::theme::Fill::Solid(
                                 theme.main_text_color(theme.background()).into(),
                             )),
@@ -3943,9 +3997,8 @@ impl CodeReviewView {
     }
 
     pub fn render_no_repo_found_state(
-        app: &AppContext,
         appearance: &Appearance,
-        message: impl Into<Cow<'static, str>>,
+        message: &'static str,
         open_repo_button: Option<Box<dyn Element>>,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
@@ -3972,7 +4025,7 @@ impl CodeReviewView {
             )
             .with_child(
                 Text::new(
-                    code_review_text(app, "code_review.state.cannot_detect_diffs"),
+                    "Cannot detect diffs for this folder",
                     appearance.ui_font_family(),
                     appearance.ui_font_size() + 2.,
                 )
@@ -4010,42 +4063,24 @@ impl CodeReviewView {
     }
 
     pub fn render_remote_state(
-        app: &AppContext,
         appearance: &Appearance,
         open_repo_button: Option<Box<dyn Element>>,
     ) -> Box<dyn Element> {
-        Self::render_no_repo_found_state(
-            app,
-            appearance,
-            code_review_text(app, "code_review.state.remote"),
-            open_repo_button,
-        )
+        Self::render_no_repo_found_state(appearance, REMOTE_TEXT, open_repo_button)
     }
 
     pub fn render_wsl_state(
-        app: &AppContext,
         appearance: &Appearance,
         open_repo_button: Option<Box<dyn Element>>,
     ) -> Box<dyn Element> {
-        Self::render_no_repo_found_state(
-            app,
-            appearance,
-            code_review_text(app, "code_review.state.wsl"),
-            open_repo_button,
-        )
+        Self::render_no_repo_found_state(appearance, WSL_TEXT, open_repo_button)
     }
 
     pub fn render_not_repo_state(
-        app: &AppContext,
         appearance: &Appearance,
         open_repo_button: Option<Box<dyn Element>>,
     ) -> Box<dyn Element> {
-        Self::render_no_repo_found_state(
-            app,
-            appearance,
-            code_review_text(app, "code_review.state.not_git_repo"),
-            open_repo_button,
-        )
+        Self::render_no_repo_found_state(appearance, DISABLED_TEXT, open_repo_button)
     }
 
     fn render_loaded_state(
@@ -4160,7 +4195,7 @@ impl CodeReviewView {
             .map(|path| {
                 let has_steps = InitProjectModel::should_have_available_steps(path, app);
                 let is_terminal_in_correct_dir = self
-                    .terminal_view(app)
+                    .focused_terminal(app)
                     .and_then(|view| {
                         view.read(app, |t, _| t.pwd().map(|pwd| pwd == path.to_string_lossy()))
                     })
@@ -4185,7 +4220,7 @@ impl CodeReviewView {
                         zero_state_column.add_child(
                             Container::new(
                                 Text::new(
-                                    code_review_text_with_args(
+                                    crate::localization::text_for_app_with_args(
                                         app,
                                         "code_review.state.repo_initialized_with_file",
                                         &[("file_name", file_name)],
@@ -4347,11 +4382,9 @@ impl CodeReviewView {
             }
             ReviewSubmissionResult::Error => {
                 log::error!("Failed to submit review comments");
+                let error_message = "Could not submit comments to the agent".to_string();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    let toast = DismissibleToast::error(code_review_text(
-                        ctx,
-                        "code_review.toast.comments_failed",
-                    ));
+                    let toast = DismissibleToast::error(error_message);
                     toast_stack.add_ephemeral_toast(toast, self.window_id, ctx);
                 });
             }
@@ -4879,7 +4912,7 @@ impl CodeReviewView {
         if file.is_expanded {
             stack.add_child(
                 SavePosition::new(
-                    Container::new(self.render_file_content(file, appearance, app))
+                    Container::new(self.render_file_content(file, appearance))
                         .with_margin_top(
                             if is_item_being_scrolled && !is_first_item_with_no_scroll {
                                 // This is the height of the header bar needs to be present. Otherwise,
@@ -5012,11 +5045,8 @@ impl CodeReviewView {
             if editor_state.has_unsaved_changes(app) {
                 let save_keystroke = Keystroke::parse("cmdorctrl-s").unwrap_or_default();
                 let save_shortcut = save_keystroke.displayed();
-                let tooltip_text = code_review_text_with_args(
-                    app,
-                    "code_review.tooltip.unsaved_changes",
-                    &[("shortcut", &save_shortcut)],
-                );
+                let tooltip_text =
+                    format!("This file has unsaved changes. {save_shortcut} to save");
                 render_unsaved_circle_with_tooltip(
                     editor_state.unsaved_changes_mouse_state(),
                     tooltip_text,
@@ -5245,19 +5275,14 @@ impl CodeReviewView {
     }
 
     /// Renders the file content (hunks for text files using LocalCodeEditorView, placeholder for binary)
-    fn render_file_content(
-        &self,
-        file: &FileState,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
+    fn render_file_content(&self, file: &FileState, appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
 
         let diff_size = file.file_diff.size;
-        if diff_size == DiffSize::Unrenderable {
+        if let DiffSize::Unrenderable(reason) = diff_size {
             return Self::styled_file_content_container(
                 Text::new(
-                    code_review_text(app, "code_review.diff_content.too_large"),
+                    reason.to_string(),
                     appearance.monospace_font_family(),
                     appearance.monospace_font_size(),
                 )
@@ -5270,7 +5295,7 @@ impl CodeReviewView {
         if file.file_diff.is_binary {
             Self::styled_file_content_container(
                 Text::new(
-                    code_review_text(app, "code_review.diff_content.binary_unavailable"),
+                    "Binary file - no diff available",
                     appearance.monospace_font_family(),
                     appearance.monospace_font_size(),
                 )
@@ -5281,7 +5306,7 @@ impl CodeReviewView {
         } else if file.file_diff.status.is_renamed() && file.file_diff.is_empty() {
             Self::styled_file_content_container(
                 Text::new(
-                    code_review_text(app, "code_review.diff_content.renamed_without_changes"),
+                    "File renamed without changes",
                     appearance.monospace_font_family(),
                     appearance.monospace_font_size(),
                 )
@@ -5292,7 +5317,7 @@ impl CodeReviewView {
         } else if file.file_diff.status.is_new_file() && file.file_diff.is_empty() {
             Self::styled_file_content_container(
                 Text::new(
-                    code_review_text(app, "code_review.diff_content.new_empty_file"),
+                    "New empty file",
                     appearance.monospace_font_family(),
                     appearance.monospace_font_size(),
                 )
@@ -5322,7 +5347,7 @@ impl CodeReviewView {
         } else {
             Self::styled_file_content_container(
                 Text::new(
-                    code_review_text(app, "code_review.diff_content.unable_to_load"),
+                    "Unable to load file content",
                     appearance.ui_font_family(),
                     appearance.ui_font_size(),
                 )
@@ -5414,7 +5439,7 @@ impl CodeReviewView {
 
         if self.discard_dialog_state.discard_file_paths.is_empty() {
             return Text::new(
-                code_review_text(app, "code_review.discard.no_file_selected"),
+                "No file selected",
                 appearance.ui_font_family(),
                 appearance.ui_font_size(),
             )
@@ -5429,7 +5454,7 @@ impl CodeReviewView {
 
         let CodeReviewViewState::Loaded(loaded) = self.state() else {
             return Text::new(
-                code_review_text(app, "code_review.discard.no_files_to_discard"),
+                "No files to discard",
                 appearance.ui_font_family(),
                 appearance.ui_font_size(),
             )
@@ -5700,7 +5725,7 @@ impl CodeReviewView {
                 let toast_id = self.revert_hunk_toast_id(ctx);
                 crate::workspace::ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     let toast = crate::view_components::DismissibleToast::default(
-                        code_review_text(ctx, "code_review.toast.diff_removed"),
+                        "Diff removed".to_string(),
                     )
                     .with_object_id(toast_id)
                     .with_action_button(self.undo_action_button.clone());
@@ -5767,7 +5792,7 @@ impl CodeReviewView {
         selected_text: String,
         ctx: &mut ViewContext<Self>,
     ) {
-        if let Some(terminal_view) = self.terminal_view.as_ref().and_then(|tv| tv.upgrade(ctx)) {
+        if let Some(terminal_view) = self.attach_target_terminal(ctx) {
             // If a CLI agent is active, send appropriate content to the PTY.
             let prompt = if start_line == end_line {
                 // Single-line: send the literal text with file/line context.
@@ -5802,7 +5827,7 @@ impl CodeReviewView {
                 let toast_id = self.attach_context_not_allowed_toast_id(ctx);
                 crate::workspace::ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     let toast = crate::view_components::DismissibleToast::default(
-                        code_review_text(ctx, "code_review.toast.cannot_attach_terminal_running"),
+                        "Cannot attach context when terminal is running".to_string(),
                     )
                     .with_object_id(toast_id);
                     toast_stack.add_ephemeral_toast(toast, self.window_id, ctx);
@@ -5857,11 +5882,7 @@ impl CodeReviewView {
     /// Insert diff set as context in the terminal input (either all files or a specific file)
     #[cfg(feature = "local_fs")]
     fn insert_diff_as_context(&mut self, scope: DiffSetScope, ctx: &mut ViewContext<Self>) {
-        if let Some(terminal_view) = self
-            .terminal_view
-            .as_ref()
-            .and_then(|view| view.upgrade(ctx))
-        {
+        if let Some(terminal_view) = self.attach_target_terminal(ctx) {
             let active_cli_agent = terminal_view.read(ctx, |tv, ctx| tv.active_cli_agent(ctx));
 
             let diff_set_scope = match &scope {
@@ -5913,10 +5934,9 @@ impl CodeReviewView {
             if !is_input_box_visible {
                 let toast_id = self.attach_diff_not_allowed_toast_id(ctx);
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    let toast = DismissibleToast::default(code_review_text(
-                        ctx,
-                        "code_review.toast.cannot_attach_input_unavailable",
-                    ))
+                    let toast = DismissibleToast::default(
+                        "Cannot attach diff while input is not available".to_string(),
+                    )
                     .with_object_id(toast_id);
                     toast_stack.add_ephemeral_toast(toast, self.window_id, ctx);
                 });
@@ -6074,7 +6094,7 @@ impl CodeReviewView {
             return;
         };
         // Try to get the terminal view and insert the context
-        if let Some(terminal_view) = self.terminal_view.as_ref().and_then(|tv| tv.upgrade(ctx)) {
+        if let Some(terminal_view) = self.attach_target_terminal(ctx) {
             let is_long_running =
                 terminal_view.read(ctx, |terminal_view, _| terminal_view.is_long_running());
             let active_cli_agent = terminal_view.read(ctx, |tv, ctx| tv.active_cli_agent(ctx));
@@ -6375,17 +6395,6 @@ impl CodeReviewView {
         }
     }
 
-    /// Refreshes metadata and PR info after a git operation (commit, push, etc.).
-    /// Diff reloading is left to the file watcher (for commits) or skipped
-    /// entirely (for push/create-PR where the working directory is unchanged).
-    fn refresh_after_git_operation(&mut self, ctx: &mut ViewContext<Self>) {
-        self.diff_state_model.update(ctx, |model, ctx| {
-            model.refresh_metadata_after_git_operation(ctx);
-        });
-        self.refresh_pr_info(ctx);
-        ctx.notify();
-    }
-
     /// Returns whether the working tree has uncommitted changes.
     ///
     /// This reads the `against_head` metadata directly rather than the loaded
@@ -6402,31 +6411,29 @@ impl CodeReviewView {
 
     /// Returns PR info for the current branch.
     ///
-    /// Reads directly from `GitRepoStatusModel`, the sole source of truth for
-    /// PR info. Matches the lifecycle of the prompt PR chip — same model, same
-    /// events, same staleness window.
+    /// Routed by repo location: local repos read from the per-repo
+    /// `GitHubRepoModel`, while remote repos read from the diff model.
     fn pr_info(&self, ctx: &AppContext) -> Option<PrInfo> {
-        #[cfg(feature = "local_fs")]
-        {
-            let git_repo_status = self.git_repo_status.as_ref()?;
-            git_repo_status.as_ref(ctx).pr_info().cloned()
+        if self.repo_path().is_some_and(LocalOrRemotePath::is_remote) {
+            return self.diff_state_model.as_ref(ctx).pr_info(ctx);
         }
-
-        #[cfg(not(feature = "local_fs"))]
-        {
-            // PR info is only tracked when local_fs is available.
-            let _ = ctx;
-            None
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "local_fs")] {
+                let github_repo_model = self.github_repo_model.as_ref()?;
+                github_repo_model.as_ref(ctx).pr_info(ctx).cloned()
+            } else {
+                None
+            }
         }
     }
 
-    /// Whether a `gh pr view` lookup is currently in flight on `GitRepoStatusModel`.
+    /// Whether a `gh pr view` lookup is currently in flight.
     fn is_pr_info_refreshing(&self, ctx: &AppContext) -> bool {
         #[cfg(feature = "local_fs")]
         {
-            self.git_repo_status
+            self.github_repo_model
                 .as_ref()
-                .map(|h| h.as_ref(ctx).is_refreshing_pr_info())
+                .map(|h| h.as_ref(ctx).is_refreshing_pr_info(ctx))
                 .unwrap_or(false)
         }
 
@@ -6439,13 +6446,10 @@ impl CodeReviewView {
 
     #[cfg(feature = "local_fs")]
     fn refresh_pr_info(&self, ctx: &mut ViewContext<Self>) {
-        let Some(handle) = self.git_repo_status.as_ref() else {
+        let Some(handle) = self.github_repo_model.as_ref() else {
             return;
         };
         handle.update(ctx, |model, ctx| {
-            // We registered as a consumer in `subscribe_to_git_repo_status`
-            // and remain registered until `on_close`, so the gate is already
-            // open for this explicit "user just ran a git/gh operation" path.
             model.refresh_pr_info(ctx);
         });
     }
@@ -6453,11 +6457,9 @@ impl CodeReviewView {
     #[cfg(not(feature = "local_fs"))]
     fn refresh_pr_info(&self, _ctx: &mut ViewContext<Self>) {}
 
-    /// Subscribes to the per-repo git status model for PR info events and
-    /// registers this view as a `pr_info` consumer so the `gh pr view`
-    /// lookup runs while the pane is open.
+    /// Subscribes to the per-repo git status model.
     #[cfg(feature = "local_fs")]
-    fn subscribe_to_git_repo_status(&mut self, ctx: &mut ViewContext<Self>) {
+    fn subscribe_to_git_repo_status_model(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(repo_path) = self
             .repo_path()
             .and_then(LocalOrRemotePath::to_local_path)
@@ -6465,8 +6467,8 @@ impl CodeReviewView {
         else {
             return;
         };
-        let result = GitStatusUpdateModel::handle(ctx)
-            .update(ctx, |model, ctx| model.subscribe(&repo_path, ctx));
+        let result =
+            GitRepoModels::handle(ctx).update(ctx, |model, ctx| model.subscribe(&repo_path, ctx));
         let handle = match result {
             Ok(handle) => handle,
             Err(err) => {
@@ -6474,33 +6476,57 @@ impl CodeReviewView {
                 return;
             }
         };
-        let view_id = ctx.view_id();
-        handle.update(ctx, |model, ctx| {
-            model.set_pr_info_consumer(view_id, true, ctx);
-        });
         ctx.subscribe_to_model(&handle, |me, _, event, ctx| match event {
-            // Both events affect what the header shows: branch metadata can
-            // change the diff stats / Create-PR availability, and PR info
-            // controls View-PR vs Create-PR. `update_git_operations_ui` mutates
-            // the primary action button's label/icon/on_click and ends with
-            // `ctx.notify()`, so this also triggers a re-render.
-            GitRepoStatusEvent::MetadataChanged | GitRepoStatusEvent::PrInfoChanged => {
+            GitRepoStatusEvent::MetadataChanged => {
                 me.update_git_operations_ui(ctx);
             }
         });
         self.git_repo_status = Some(handle);
     }
 
+    /// Subscribes to the per-repo GitHub-info model.
     #[cfg(feature = "local_fs")]
-    fn unsubscribe_from_git_repo_status(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(handle) = self.git_repo_status.take() else {
+    fn subscribe_to_github_repo_model(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(repo_path) = self
+            .repo_path()
+            .and_then(LocalOrRemotePath::to_local_path)
+            .map(Path::to_path_buf)
+        else {
             return;
         };
-        let view_id = ctx.view_id();
-        handle.update(ctx, |model, ctx| {
-            model.set_pr_info_consumer(view_id, false, ctx);
+
+        let result = GitRepoModels::handle(ctx).update(ctx, |model, ctx| {
+            model.subscribe_github_repo(&repo_path, ctx)
         });
-        ctx.unsubscribe_to_model(&handle);
+        let handle = match result {
+            Ok(handle) => handle,
+            Err(err) => {
+                log::warn!("CodeReviewView github repo subscribe failed: {err}");
+                return;
+            }
+        };
+        ctx.subscribe_to_model(&handle, |me, _, event, ctx| match event {
+            GitHubRepoEvent::PrInfoChanged => {
+                me.update_git_operations_ui(ctx);
+            }
+            // Repository name/owner doesn't affect the git-ops UI.
+            GitHubRepoEvent::RepositoryInfoChanged => {}
+        });
+        self.github_repo_model = Some(handle);
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn unsubscribe_from_git_repo_status_model(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(handle) = self.git_repo_status.take() {
+            ctx.unsubscribe_to_model(&handle);
+        }
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn unsubscribe_from_github_repo_model(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(handle) = self.github_repo_model.take() {
+            ctx.unsubscribe_to_model(&handle);
+        }
     }
 
     /// Opens a `GitDialog` overlay for the given `kind`. Centralizes the
@@ -6520,13 +6546,10 @@ impl CodeReviewView {
         {
             return;
         }
-        let Some(repo_path) = self
-            .repo_path()
-            .and_then(LocalOrRemotePath::to_local_path)
-            .map(Path::to_path_buf)
-        else {
+        let Some(repo_path) = self.repo_path().cloned() else {
             return;
         };
+        let diff_state_model = self.diff_state_model.clone();
         let branch_name = self
             .diff_state_model
             .read(ctx, |model, ctx| model.get_current_branch_name(ctx))
@@ -6547,6 +6570,7 @@ impl CodeReviewView {
                 ctx.add_typed_action_view(|ctx| {
                     GitDialog::new_for_commit(
                         repo_path,
+                        diff_state_model,
                         branch_name,
                         allow_create_pr,
                         has_upstream,
@@ -6559,7 +6583,14 @@ impl CodeReviewView {
                     .diff_state_model
                     .read(ctx, |model, ctx| model.unpushed_commits(ctx).to_vec());
                 ctx.add_typed_action_view(|ctx| {
-                    GitDialog::new_for_push(repo_path, branch_name, publish, commits, ctx)
+                    GitDialog::new_for_push(
+                        repo_path,
+                        diff_state_model,
+                        branch_name,
+                        publish,
+                        commits,
+                        ctx,
+                    )
                 })
             }
             GitDialogKind::CreatePr => {
@@ -6567,7 +6598,13 @@ impl CodeReviewView {
                     .diff_state_model
                     .read(ctx, |model, ctx| model.get_main_branch_name(ctx));
                 ctx.add_typed_action_view(|ctx| {
-                    GitDialog::new_for_pr(repo_path, branch_name, base_branch_name, ctx)
+                    GitDialog::new_for_pr(
+                        repo_path,
+                        diff_state_model,
+                        branch_name,
+                        base_branch_name,
+                        ctx,
+                    )
                 })
             }
         };
@@ -6576,7 +6613,7 @@ impl CodeReviewView {
             match event {
                 GitDialogEvent::Completed => {
                     me.git_dialog = None;
-                    me.refresh_after_git_operation(ctx);
+                    me.refresh_pr_info(ctx);
                 }
                 GitDialogEvent::Cancelled => {
                     me.git_dialog = None;
@@ -6623,24 +6660,6 @@ impl CodeReviewView {
     /// Updates the primary git operations button, chevron visibility, and
     /// related state to match the current [`PrimaryGitActionMode`].
     fn update_git_operations_ui(&mut self, ctx: &mut ViewContext<Self>) {
-        // Disable the button for remote sessions.
-        if self.repo_path().is_some_and(LocalOrRemotePath::is_remote) {
-            const REMOTE_TOOLTIP: &str = "Git operations aren't available in remote sessions";
-            self.git_primary_action_button.update(ctx, |button, ctx| {
-                button.set_label("Commit", ctx);
-                button.set_icon(Some(Icon::GitCommit), ctx);
-                button.set_disabled(true, ctx);
-                button.set_tooltip(Some(REMOTE_TOOLTIP), ctx);
-                button.set_adjoined_side(AdjoinedSide::Right, ctx);
-            });
-            self.git_operations_chevron.update(ctx, |button, ctx| {
-                button.set_disabled(true, ctx);
-                button.set_tooltip(Some(REMOTE_TOOLTIP), ctx);
-            });
-            ctx.notify();
-            return;
-        }
-
         let mode = self.primary_git_action_mode(ctx);
 
         match mode {
@@ -6746,7 +6765,7 @@ impl CodeReviewView {
     /// Returns the "Commit" dropdown item. Label/icon/action are fixed;
     /// only the disabled state flips across modes (enabled in Commit mode,
     /// disabled in Push mode where there's nothing to commit).
-    fn commit_menu_item(app: &AppContext, disabled: bool) -> MenuItem<CodeReviewAction> {
+    fn commit_menu_item(disabled: bool, app: &AppContext) -> MenuItem<CodeReviewAction> {
         MenuItemFields::new(code_review_text(app, "code_review.git.commit"))
             .with_icon(Icon::GitCommit)
             .with_on_select_action(CodeReviewAction::OpenCommitDialog)
@@ -6758,9 +6777,9 @@ impl CodeReviewView {
     /// branch already has an upstream, `Publish` otherwise (first push also
     /// sets the upstream).
     fn push_or_publish_menu_item(
-        app: &AppContext,
         has_upstream: bool,
         disabled: bool,
+        app: &AppContext,
     ) -> MenuItem<CodeReviewAction> {
         if has_upstream {
             MenuItemFields::new(code_review_text(app, "code_review.git.push"))
@@ -6817,19 +6836,19 @@ impl CodeReviewView {
         let has_upstream = diff_state.upstream_ref(app).is_some();
         match self.primary_git_action_mode(app) {
             PrimaryGitActionMode::Commit => vec![
-                Self::commit_menu_item(app, false),
+                Self::commit_menu_item(false, app),
                 // Middle item sends existing commits to the remote. Uncommitted
                 // changes in the working tree don't block this — only whether
                 // there are local commits to send.
-                Self::push_or_publish_menu_item(app, has_upstream, !has_local_commits),
+                Self::push_or_publish_menu_item(has_upstream, !has_local_commits, app),
                 // PR item handles its own disabled state (main branch, no
                 // upstream). Uncommitted changes don't block it: the PR is
                 // based on whatever's already been pushed.
                 self.pr_menu_item(app),
             ],
             PrimaryGitActionMode::Push => vec![
-                Self::commit_menu_item(app, true),
-                Self::push_or_publish_menu_item(app, has_upstream, false),
+                Self::commit_menu_item(true, app),
+                Self::push_or_publish_menu_item(has_upstream, false, app),
                 self.pr_menu_item(app),
             ],
             PrimaryGitActionMode::CreatePr
@@ -6879,15 +6898,9 @@ impl CodeReviewView {
         }
 
         let (comment_label, comment_icon) = if self.get_existing_diffset_comment(ctx).is_some() {
-            (
-                code_review_text(ctx, "code_review.menu.show_saved_comment"),
-                Icon::MessageText,
-            )
+            ("Show saved comment", Icon::MessageText)
         } else {
-            (
-                code_review_text(ctx, "code_review.menu.add_comment"),
-                Icon::MessagePlusSquare,
-            )
+            ("Add comment", Icon::MessagePlusSquare)
         };
 
         items.push(
@@ -6925,15 +6938,9 @@ impl CodeReviewView {
         if FeatureFlag::FileAndDiffSetComments.is_enabled() && has_changes {
             let (comment_label, comment_icon) = if self.get_existing_diffset_comment(ctx).is_some()
             {
-                (
-                    code_review_text(ctx, "code_review.menu.show_saved_comment"),
-                    Icon::MessageText,
-                )
+                ("Show saved comment", Icon::MessageText)
             } else {
-                (
-                    code_review_text(ctx, "code_review.menu.add_comment"),
-                    Icon::MessagePlusSquare,
-                )
+                ("Add comment", Icon::MessagePlusSquare)
             };
 
             items.push(
@@ -7135,17 +7142,17 @@ impl View for CodeReviewView {
             .unwrap_or(false);
 
         let main_content = match self.state() {
-            CodeReviewViewState::None => CodeReviewView::render_loading_state(appearance, ctx),
+            CodeReviewViewState::None => CodeReviewView::render_loading_state(appearance),
             CodeReviewViewState::Loaded(loaded_state) => {
                 // For global buffer mode, show loading state until all editors have loaded
                 // their buffer content. This prevents a brief flash of empty editors.
                 if !self.all_editors_loaded() {
-                    CodeReviewView::render_loading_state(appearance, ctx)
+                    CodeReviewView::render_loading_state(appearance)
                 } else {
                     self.render_loaded_state(loaded_state, appearance, is_in_split_pane, ctx)
                 }
             }
-            CodeReviewViewState::Error(err) => self.render_error_state(err, appearance, ctx),
+            CodeReviewViewState::Error(err) => self.render_error_state(err, appearance),
             CodeReviewViewState::NoRepoFound => self.render_no_repo_for_env(ctx, appearance),
         };
 
@@ -7584,14 +7591,14 @@ impl TypedActionView for CodeReviewView {
                 ctx.focus_self();
             }
             CodeReviewAction::OpenRepository => {
-                if let Some(terminal_view) = self.terminal_view(ctx) {
+                if let Some(terminal_view) = self.focused_terminal(ctx) {
                     terminal_view.update(ctx, |terminal, ctx| {
                         terminal.handle_action(&TerminalAction::PickRepoToOpen, ctx);
                     });
                 }
             }
             CodeReviewAction::InitProjectForCurrentDirectory => {
-                if let Some(terminal_view) = self.terminal_view(ctx) {
+                if let Some(terminal_view) = self.focused_terminal(ctx) {
                     terminal_view.update(ctx, |terminal, ctx| {
                         terminal.handle_action(&TerminalAction::InitProject, ctx);
                     });
@@ -7771,12 +7778,9 @@ impl BackingView for CodeReviewView {
     fn render_header_content(
         &self,
         _ctx: &view::HeaderRenderContext<'_>,
-        app: &AppContext,
+        _app: &AppContext,
     ) -> view::HeaderContent {
-        view::HeaderContent::simple(code_review_text(
-            app,
-            "code_review.header.reviewing_code_changes",
-        ))
+        view::HeaderContent::simple("Reviewing code changes")
     }
 
     fn set_focus_handle(&mut self, focus_handle: PaneFocusHandle, ctx: &mut ViewContext<Self>) {
