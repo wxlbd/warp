@@ -5,6 +5,8 @@ use std::time::Duration;
 use anyhow::anyhow;
 pub use glibc::{GlibcVersion, RemoteLibc};
 use warp_core::channel::{Channel, ChannelState};
+
+const DEFAULT_OSS_REMOTE_SERVER_RELEASE_REPOSITORY: &str = "wxlbd/warp";
 pub const REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED: &str = "unversioned";
 
 /// State machine for the remote server install → launch → initialize flow.
@@ -346,11 +348,7 @@ pub fn remote_server_dir() -> String {
         Channel::Preview => ".warp-preview",
         Channel::Dev | Channel::Integration => ".warp-dev",
         Channel::Local => ".warp-local",
-        Channel::Oss => {
-            // TODO(alokedesai): need to figure out how remote server works with warp-oss
-            // For now, return what Dev returns.
-            ".warp-dev"
-        }
+        Channel::Oss => ".warp-oss",
     };
     format!("~/{warp_dir}/remote-server")
 }
@@ -535,7 +533,8 @@ fn pinned_version() -> &'static str {
 /// from a previous client version.
 pub fn remote_server_artifact_version() -> &'static str {
     match ChannelState::channel() {
-        Channel::Local | Channel::Oss => REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED,
+        Channel::Local => REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED,
+        Channel::Oss => pinned_version(),
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
             pinned_version()
         }
@@ -559,7 +558,7 @@ pub fn remote_server_bundled_resources_dir() -> String {
 }
 
 /// The install script template, loaded from a standalone `.sh` file for
-/// readability. Placeholders like `{download_base_url}` are substituted by
+/// readability. Placeholders like `{download_url}` are substituted by
 /// [`install_script`].
 const INSTALL_SCRIPT_TEMPLATE: &str = include_str!("install_remote_server.sh");
 
@@ -567,28 +566,35 @@ const INSTALL_SCRIPT_TEMPLATE: &str = include_str!("install_remote_server.sh");
 /// at the current client version.
 ///
 /// The script detects the remote architecture via `uname -m`, downloads
-/// the correct Oz CLI tarball from the download URL, and installs it at
+/// the correct CLI tarball from the download URL, and installs it at
 /// the path returned by [`remote_server_binary`] so repeat invocations
-/// are idempotent. The `version_query` / `version_suffix` substitutions
-/// follow the same rule as [`remote_server_binary`]: empty on
-/// [`Channel::Local`] and [`Channel::Oss`] (so the install lands at
-/// the unversioned path used by `script/deploy_remote_server`); pinned to
-/// `&version={v}` / `-{v}` on every other channel, where `v` falls back
-/// to `CARGO_PKG_VERSION` when no release tag is baked in.
+/// are idempotent. First-party release channels use `/download/cli`;
+/// OSS builds download self-hosted release assets from GitHub.
 pub fn install_script(staging_tarball_path: Option<&str>) -> String {
-    let (vq, version_suffix) = match ChannelState::channel() {
-        Channel::Local | Channel::Oss => (String::new(), String::new()),
+    let platform_os = "$os_name";
+    let platform_arch = "$arch_name";
+    let download_url = match ChannelState::channel() {
+        Channel::Oss => format!(
+            "{}/warp-oss-remote-server-{platform_os}-{platform_arch}.tar.gz",
+            oss_remote_server_download_base_url()
+        ),
+        _ => format!(
+            "{}?package=tar&os={platform_os}&arch={platform_arch}&channel={}{}",
+            download_url(),
+            download_channel(),
+            version_query()
+        ),
+    };
+    let version_suffix = match ChannelState::channel() {
+        Channel::Local | Channel::Oss => String::new(),
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
-            let v = pinned_version();
-            (format!("&version={v}"), format!("-{v}"))
+            format!("-{}", pinned_version())
         }
     };
     INSTALL_SCRIPT_TEMPLATE
-        .replace("{download_base_url}", &download_url())
-        .replace("{channel}", download_channel())
+        .replace("{download_url}", &download_url)
         .replace("{install_dir}", &remote_server_dir())
         .replace("{binary_name}", binary_name())
-        .replace("{version_query}", &vq)
         .replace("{version_suffix}", &version_suffix)
         .replace("{bundled_resources_dir_name}", BUNDLED_RESOURCES_DIR_NAME)
         .replace(
@@ -606,6 +612,19 @@ fn download_url() -> String {
     let base = ChannelState::server_root_url();
     let base = base.trim_end_matches('/');
     format!("{base}/download/cli")
+}
+
+fn oss_remote_server_release_repository() -> &'static str {
+    option_env!("WARP_OSS_REMOTE_SERVER_RELEASE_REPOSITORY")
+        .unwrap_or(DEFAULT_OSS_REMOTE_SERVER_RELEASE_REPOSITORY)
+}
+
+fn oss_remote_server_download_base_url() -> String {
+    format!(
+        "https://github.com/{}/releases/download/{}",
+        oss_remote_server_release_repository(),
+        pinned_version()
+    )
 }
 
 /// Maps the client's [`Channel`] to the server's download channel parameter.
@@ -636,10 +655,26 @@ fn version_query() -> String {
     }
 }
 
+fn oss_remote_server_asset_name(platform: &RemotePlatform) -> String {
+    format!(
+        "warp-oss-remote-server-{}-{}.tar.gz",
+        platform.os.as_str(),
+        platform.arch.as_str()
+    )
+}
+
 /// Returns the full download URL for the remote server tarball,
 /// parameterized by the remote platform. Used by the SCP upload
 /// fallback to download the same artifact the shell script would fetch.
 pub fn download_tarball_url(platform: &RemotePlatform) -> String {
+    if ChannelState::channel() == Channel::Oss {
+        return format!(
+            "{}/{}",
+            oss_remote_server_download_base_url(),
+            oss_remote_server_asset_name(platform)
+        );
+    }
+
     format!(
         "{}?package=tar&os={}&arch={}&channel={}{}",
         download_url(),

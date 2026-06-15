@@ -116,6 +116,12 @@ fn identity_dir_name_is_deterministic() {
 }
 
 #[test]
+fn oss_remote_server_dir_is_channel_scoped() {
+    assert_eq!(remote_server_dir(), "~/.warp-oss/remote-server");
+    assert_eq!(remote_server_binary(), "~/.warp-oss/remote-server/warp-oss");
+}
+
+#[test]
 fn identity_dir_name_differs_for_different_keys() {
     assert_ne!(
         remote_server_identity_dir_name("key-a"),
@@ -279,6 +285,28 @@ fn install_script_substitutes_bundled_resources_dir_name() {
     let script = install_script(None);
     assert!(!script.contains("{bundled_resources_dir_name}"));
     assert!(script.contains(&format!("$install_dir/{BUNDLED_RESOURCES_DIR_NAME}")));
+}
+
+#[test]
+fn oss_install_script_downloads_release_asset_and_finds_warp_oss_binary() {
+    let script = install_script(None);
+    assert!(script.contains(
+        "https://github.com/wxlbd/warp/releases/download/0.1.0/warp-oss-remote-server-$os_name-$arch_name.tar.gz"
+    ));
+    assert!(script.contains("find \"$tmpdir\" -type f -name 'warp-oss'"));
+}
+
+#[test]
+fn oss_tarball_url_uses_github_release_asset() {
+    let platform = RemotePlatform {
+        os: RemoteOs::Linux,
+        arch: RemoteArch::X86_64,
+    };
+
+    assert_eq!(
+        download_tarball_url(&platform),
+        "https://github.com/wxlbd/warp/releases/download/0.1.0/warp-oss-remote-server-linux-x86_64.tar.gz"
+    );
 }
 
 #[cfg(unix)]
