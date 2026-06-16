@@ -167,6 +167,7 @@ mod package_manager {
 
     use super::*;
     use crate::appearance::Appearance;
+    use crate::localization;
 
     fn text(app: &warpui::AppContext, key: &str) -> String {
         localization::text_for_app(app, key)

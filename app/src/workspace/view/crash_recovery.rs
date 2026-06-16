@@ -3,6 +3,8 @@ use warpui::{AppContext, SingletonEntity as _, ViewContext};
 
 use super::{Workspace, WorkspaceBannerFields};
 use crate::crash_recovery::CrashRecovery;
+#[cfg(target_os = "linux")]
+use crate::localization;
 
 #[cfg(target_os = "linux")]
 fn text(app: &AppContext, key: &str) -> String {
