@@ -1411,8 +1411,8 @@ where
                 .iter()
                 .filter(|a| matches!(a.kind, RunAgentsAgentOutcomeKind::Launched { .. }))
                 .count();
-            let label = if launched == total {
-                if total == 1 {
+            if launched == total {
+                let label = if total == 1 {
                     text("agent.orchestration.run_agents.spawned_one", &[])
                 } else {
                     let count = total.to_string();
@@ -1420,21 +1420,32 @@ where
                         "agent.orchestration.run_agents.spawned_count",
                         &[("count", count.as_str())],
                     )
-                }
+                };
+                (label, StatusKind::Success)
+            } else if launched == 0 {
+                // Every child failed to launch: surface a terminal failure
+                // rather than the in-progress-looking mixed state.
+                let label = if total == 1 {
+                    text("agent.orchestration.run_agents.spawn_failed_one", &[])
+                } else {
+                    let total = total.to_string();
+                    text(
+                        "agent.orchestration.run_agents.spawn_failed_count",
+                        &[("count", total.as_str())],
+                    )
+                };
+                (label, StatusKind::Failure)
             } else {
                 let launched = launched.to_string();
                 let total = total.to_string();
-                text(
-                    "agent.orchestration.run_agents.spawned_partial",
-                    &[("launched", launched.as_str()), ("total", total.as_str())],
+                (
+                    text(
+                        "agent.orchestration.run_agents.spawned_partial",
+                        &[("launched", launched.as_str()), ("total", total.as_str())],
+                    ),
+                    StatusKind::Mixed,
                 )
-            };
-            let kind = if launched == total {
-                StatusKind::Success
-            } else {
-                StatusKind::Mixed
-            };
-            (label, kind)
+            }
         }
         RunAgentsResult::Denied { reason } => {
             let body = if reason.is_empty() {
@@ -1501,7 +1512,10 @@ fn render_status_only_card(
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let icon = match kind {
-        StatusKind::Spawning | StatusKind::Mixed => icons::yellow_running_icon(appearance).finish(),
+        StatusKind::Spawning => icons::yellow_running_icon(appearance).finish(),
+        // Partial success is terminal, so use a static warning glyph rather
+        // than the in-progress-looking running circle.
+        StatusKind::Mixed => inline_action_icons::warning_icon(appearance).finish(),
         StatusKind::Success => inline_action_icons::green_check_icon(appearance).finish(),
         StatusKind::Failure => inline_action_icons::red_x_icon(appearance).finish(),
         StatusKind::Cancelled => inline_action_icons::cancelled_icon(appearance).finish(),

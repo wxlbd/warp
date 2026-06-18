@@ -19,7 +19,7 @@ pub fn classify_driver_error(error: &AgentDriverError) -> (AgentTaskState, TaskS
                 PlatformErrorCode::InternalError,
             ),
         ),
-        AgentDriverError::BootstrapFailed => (
+        AgentDriverError::BootstrapFailed { error: _ } => (
             AgentTaskState::Error,
             TaskStatusUpdate::with_error_code(
                 text("agent_sdk.driver.error_classification.bootstrap_failed"),

@@ -96,6 +96,7 @@ fn conversation_status_text(app: &AppContext, status: &ConversationStatus) -> St
         ConversationStatus::InProgress => "conversation_details.status.in_progress",
         ConversationStatus::Success => "conversation_details.status.done",
         ConversationStatus::Error => "conversation_details.status.error",
+        ConversationStatus::TransientError => "conversation_details.status.transient_error",
         ConversationStatus::Cancelled => "conversation_details.status.cancelled",
         ConversationStatus::Blocked { .. } => "conversation_details.status.blocked",
         ConversationStatus::WaitingForEvents => "conversation_details.status.waiting_for_events",
@@ -809,14 +810,8 @@ impl ConversationDetailsPanel {
                 Some(*ai_conversation_id.as_ref()?)
             }
             PanelMode::Task {
-                display_status,
-                conversation_id,
-                ..
+                conversation_id, ..
             } => {
-                let status = display_status.as_ref()?;
-                if status.is_working() {
-                    return None;
-                }
                 // Hide for non-Oz harnesses (e.g. Claude, Gemini): they can't be
                 // forked into a local Warp conversation.
                 if matches!(self.data.harness, Some(h) if h != Harness::Oz) {

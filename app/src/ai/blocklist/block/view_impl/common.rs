@@ -3084,6 +3084,16 @@ pub fn render_failed_output(props: FailedOutputProps, app: &AppContext) -> Box<d
     let appearance = Appearance::as_ref(app);
     let apology = error_text(app, "agent.error.apology");
 
+    // While an automatic retry/resume is still in flight, don't surface the underlying
+    // transport failure at all. These are typically transient and recover on their own,
+    // so showing the alarming "Warp lost connection" banner (plus debug info) for every
+    // blip is noisy and misleading. Render nothing during in-flight recovery; the full
+    // error banner is only shown once recovery has actually failed. Dogfood builds
+    // (Local/Dev) opt out so developers still see every transport failure aggressively.
+    if props.error.should_suppress_during_recovery() {
+        return Empty::new().finish();
+    }
+
     let error_text = match props.error {
         RenderableAIError::QuotaLimit {
             user_display_message,
@@ -3112,28 +3122,16 @@ pub fn render_failed_output(props: FailedOutputProps, app: &AppContext) -> Box<d
             let internal_error = error_text(app, "agent.error.internal_warp");
             format!("{apology}\n\n{internal_error}")
         }
-        RenderableAIError::Other {
-            error_message,
-            will_attempt_resume,
-            waiting_for_network,
-        } => {
-            if *will_attempt_resume {
-                if *waiting_for_network {
-                    error_text_with_args(
-                        app,
-                        "agent.error.resume_when_network_restored",
-                        &[("message", error_message)],
-                    )
-                } else {
-                    error_text_with_args(
-                        app,
-                        "agent.error.attempting_resume",
-                        &[("message", error_message)],
-                    )
-                }
-            } else {
-                format!("{apology}\n\n{error_message}")
-            }
+        RenderableAIError::Other { error_message, .. } => {
+            // A still-recovering `Other` error is handled by the early return above; once we
+            // reach here recovery has failed, so surface the error directly.
+            format!("{apology}\n\n{error_message}")
+        }
+        RenderableAIError::TransientNetworkError { .. } => {
+            // Recovering transient errors are handled by the early return above; once we
+            // reach here recovery has failed. These carry their own complete user-facing
+            // copy (plus debug info), so the apology prefix adds nothing.
+            props.error.to_string()
         }
         RenderableAIError::InvalidApiKey {
             provider,
