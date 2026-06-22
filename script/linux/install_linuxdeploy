@@ -2,6 +2,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 # Ensure the ~/.local/bin directory exists so we can download things into it.
 LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$LOCAL_BIN"
@@ -34,7 +36,7 @@ download_appimage() {
   else
     echo "⬇️  Downloading $APPIMAGE_NAME..."
     APPIMAGE_PATH="$LOCAL_BIN/$APPIMAGE_NAME"
-    curl -fL "$DOWNLOAD_URL_BASE/$APPIMAGE_NAME" --output "$APPIMAGE_PATH"
+    "$SCRIPT_DIR"/curl_with_retry -fL "$DOWNLOAD_URL_BASE/$APPIMAGE_NAME" --output "$APPIMAGE_PATH"
     chmod +x "$APPIMAGE_PATH"
     # Create a symlink so we can invoke it like a normal binary.
     ln -s "$APPIMAGE_PATH" "$LOCAL_BIN/$BINARY_NAME"

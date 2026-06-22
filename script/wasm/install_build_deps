@@ -4,6 +4,8 @@
 
 set -e
 
+REPO_ROOT="$PWD"
+
 # Install Rust and other development libraries needed in the compilation
 # process. Web and Linux are both built on Linux runners, so we can reuse
 # the linux build dependencies script here.
@@ -22,7 +24,7 @@ cargo binstall --force -y wasm-opt
 # Install wasm-split binary.
 mkdir -p "$HOME/.local/bin"
 cd "$HOME/.local/bin"
-curl -L https://github.com/getsentry/symbolicator/releases/download/26.3.1/wasm-split-Linux-x86_64 -o wasm-split
+"$REPO_ROOT"/script/linux/curl_with_retry -L https://github.com/getsentry/symbolicator/releases/download/26.3.1/wasm-split-Linux-x86_64 -o wasm-split
 chmod +x wasm-split
 # Export .local/bin into the path so we can find the wasm-split binary.
 echo "$HOME/.local/bin" >> $GITHUB_PATH

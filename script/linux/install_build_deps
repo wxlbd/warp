@@ -53,7 +53,7 @@ if [[ "$(source /etc/os-release; echo $ID $ID_LIKE)" = *"debian"* ]]; then
     aarch64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-aarch_64.zip" ;;
     *)       echo "Unsupported architecture for protoc: $(uname -m)"; exit 1 ;;
   esac
-  curl -fsSL -o /tmp/protoc.zip \
+  "$PWD"/script/linux/curl_with_retry -fsSL -o /tmp/protoc.zip \
     "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
   warp_sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
   rm /tmp/protoc.zip

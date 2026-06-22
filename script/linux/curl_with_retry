@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# Run curl with retries for CI runners where apt/needrestart may briefly disrupt
+# DNS or networking before the next download starts.
+
+set -u
+
+ATTEMPTS="${CURL_RETRY_ATTEMPTS:-6}"
+DELAY_SECONDS="${CURL_RETRY_DELAY_SECONDS:-10}"
+
+for attempt in $(seq 1 "$ATTEMPTS"); do
+  if curl "$@"; then
+    exit 0
+  fi
+
+  status=$?
+  if [ "$attempt" -eq "$ATTEMPTS" ]; then
+    echo "curl failed after $ATTEMPTS attempts with exit code $status." >&2
+    exit "$status"
+  fi
+
+  echo "curl failed with exit code $status (attempt $attempt/$ATTEMPTS); retrying in ${DELAY_SECONDS}s..." >&2
+  if command -v getent >/dev/null 2>&1; then
+    getent hosts github.com >/dev/null 2>&1 || echo "github.com is not resolvable yet." >&2
+  fi
+  sleep "$DELAY_SECONDS"
+done

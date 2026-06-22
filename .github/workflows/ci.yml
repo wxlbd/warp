@@ -505,7 +505,7 @@ jobs:
           MUSL_CROSS_TARGET="x86_64-unknown-linux-musl"
           MUSL_CROSS_SHA256="6534870abd7dc327fd2e14cc53972d0552b21f47db5769505534f788537e3544"
           MUSL_CROSS_ARCHIVE="$MUSL_CROSS_TARGET.tar.xz"
-          curl -fsSLO "https://github.com/cross-tools/musl-cross/releases/download/$MUSL_CROSS_TAG/$MUSL_CROSS_ARCHIVE"
+          script/linux/curl_with_retry -fsSLO "https://github.com/cross-tools/musl-cross/releases/download/$MUSL_CROSS_TAG/$MUSL_CROSS_ARCHIVE"
           echo "$MUSL_CROSS_SHA256  $MUSL_CROSS_ARCHIVE" | sha256sum -c -
           sudo mkdir -p /opt/x-tools
           sudo tar -xf "$MUSL_CROSS_ARCHIVE" -C /opt/x-tools
