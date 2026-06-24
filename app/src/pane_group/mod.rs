@@ -198,6 +198,10 @@ pub use working_directories::{WorkingDirectoriesEvent, WorkingDirectoriesModel};
 use self::pane::{DetachType, PaneViewEvent};
 pub use crate::code_review::CodeReviewPanelArg;
 
+/// Binding name for the action that toggles maximizing the active pane. Shared so
+/// the pane header menu item can surface the same shortcut the binding resolves to.
+pub const TOGGLE_MAXIMIZE_PANE_BINDING_NAME: &str = "pane_group:toggle_maximize_pane";
+
 lazy_static! {
     // The value to use as the initial window bounds if we are unable to
     // determine them for any reason.
@@ -468,7 +472,7 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::SplitPaneRight)
         .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
         EditableBinding::new(
-            "pane_group:toggle_maximize_pane",
+            TOGGLE_MAXIMIZE_PANE_BINDING_NAME,
             binding_description(
                 "Toggle Maximize Active Pane",
                 "pane_group.binding.toggle_maximize_active_pane",
@@ -2222,6 +2226,14 @@ impl PaneGroup {
         app: &'a AppContext,
     ) -> impl Iterator<Item = (PaneId, ViewHandle<CodeView>)> + 'a {
         self.panes_of::<CodePane>()
+            .map(move |pane| (pane.id(), pane.file_view(app)))
+    }
+    /// Iterate over the file notebook panes in this pane group.
+    pub fn file_notebook_panes<'a>(
+        &'a self,
+        app: &'a AppContext,
+    ) -> impl Iterator<Item = (PaneId, ViewHandle<FileNotebookView>)> + 'a {
+        self.panes_of::<FilePane>()
             .map(move |pane| (pane.id(), pane.file_view(app)))
     }
 
@@ -7873,6 +7885,24 @@ impl View for PaneGroup {
         };
 
         ctx
+    }
+
+    fn child_view_ids(&self, _app: &AppContext) -> Vec<EntityId> {
+        // Modals and banners owned directly by the pane group are only
+        // rendered while open, so they're usually absent from the render-time
+        // parent graph. Report them explicitly so they move with the pane
+        // group when it is transferred to another window; otherwise a later
+        // render of one of these handles in the new window would look the
+        // view up in a window that no longer holds it and panic with a
+        // "circular view reference". The per-pane views (and their backing
+        // terminal/editor views) are reached via the structural parent graph
+        // and `PaneView::child_view_ids`.
+        vec![
+            self.share_block_modal.id(),
+            self.share_session_modal.id(),
+            self.shared_session_role_change_modal.id(),
+            self.user_default_shell_changed_banner.id(),
+        ]
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {

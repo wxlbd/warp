@@ -1,5 +1,8 @@
 use std::cell::Cell;
 
+use onboarding::components::feature_optout_dialog::{
+    render_feature_optout_dialog, FeatureOptOutDialog,
+};
 use onboarding::slides::{layout, slide_content};
 use onboarding::{OnboardingIntention, AI_FEATURES, WARP_DRIVE_FEATURES};
 use pathfinder_color::ColorU;
@@ -12,10 +15,10 @@ use warp_core::ui::Icon;
 use warpui::actions::StandardAction;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
-    Align, Border, CacheOption, ChildAnchor, ClippedScrollStateHandle, ConstrainedBox, Container,
-    CornerRadius, CrossAxisAlignment, Dismiss, Fill, Flex, FormattedTextElement,
-    HighlightedHyperlink, Image, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack,
+    Align, CacheOption, ChildAnchor, ClippedScrollStateHandle, Container, CornerRadius,
+    CrossAxisAlignment, Dismiss, Fill, Flex, FormattedTextElement, HighlightedHyperlink, Image,
+    MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack,
 };
 use warpui::fonts::Weight;
 use warpui::keymap::{FixedBinding, Keystroke};
@@ -95,6 +98,7 @@ pub enum LoginSlideAction {
     Enter,
     ShowSkipDialog,
     ConfirmSkip,
+    LoginFromSkipDialog,
     DismissDialog,
     DismissOverlayOrBack,
     Back,
@@ -146,6 +150,16 @@ enum LoginStep {
 #[derive(Copy, Clone, Debug)]
 enum LoginSlideOverlay {
     SkipDialog,
+}
+
+/// Why the login slide is being shown, which drives its copy. The Warp-agent
+/// and Terminal+Drive paths require an account (server-side inference / cloud
+/// sync), so skipping is framed as losing that feature; the third-party path
+/// only encourages an account, so it gets softer, skip-friendly wording.
+enum LoginPurpose {
+    WarpAgent,
+    WarpDrive,
+    ThirdParty,
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +431,24 @@ impl LoginSlideView {
         ctx.emit(LoginSlideEvent::LoginLaterConfirmed);
     }
 
+    /// Starts the browser sign-up flow. Shared by the Continue button and the
+    /// skip dialog's cancel button.
+    fn start_login(&mut self, ctx: &mut ViewContext<Self>) {
+        send_telemetry_from_ctx!(
+            TelemetryEvent::LoginButtonClicked {
+                source: LoginEventSource::OnboardingSlide,
+            },
+            ctx
+        );
+        self.last_login_failure_reason = None;
+        self.step = LoginStep::BrowserOpen;
+        AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
+            let sign_up_url = auth_manager.sign_up_url();
+            ctx.open_url(&sign_up_url);
+        });
+        ctx.notify();
+    }
+
     // ------------------------------------------------------------------
     // Rendering — main layout
     // ------------------------------------------------------------------
@@ -476,6 +508,19 @@ impl LoginSlideView {
         }
     }
 
+    fn login_purpose(&self) -> LoginPurpose {
+        match self.intention {
+            OnboardingIntention::Terminal => LoginPurpose::WarpDrive,
+            OnboardingIntention::AgentDrivenDevelopment => {
+                if self.ai_enabled {
+                    LoginPurpose::WarpAgent
+                } else {
+                    LoginPurpose::ThirdParty
+                }
+            }
+        }
+    }
+
     fn render_select_auth_content(
         &self,
         appearance: &Appearance,
@@ -485,11 +530,16 @@ impl LoginSlideView {
         let sub_text_color = internal_colors::text_sub(theme, theme.background().into_solid());
         let ui_builder = appearance.ui_builder();
 
-        let is_terminal = matches!(self.intention, OnboardingIntention::Terminal);
-        let title_key = if is_terminal {
-            "auth.onboarding.title.drive"
-        } else {
-            "auth.onboarding.title.ai"
+        let (title_key, subtitle_key) = match self.login_purpose() {
+            LoginPurpose::WarpDrive => (
+                "auth.onboarding.title.drive",
+                "auth.onboarding.subtitle.drive",
+            ),
+            LoginPurpose::WarpAgent => ("auth.onboarding.title.ai", "auth.onboarding.subtitle.ai"),
+            LoginPurpose::ThirdParty => (
+                "auth.onboarding.title.third_party",
+                "auth.onboarding.subtitle.third_party",
+            ),
         };
         let title = FormattedTextElement::from_str(
             localization::text_for_app(app, title_key),
@@ -504,11 +554,6 @@ impl LoginSlideView {
         .with_alignment(TextAlignment::Left)
         .finish();
 
-        let subtitle_key = if is_terminal {
-            "auth.onboarding.subtitle.drive"
-        } else {
-            "auth.onboarding.subtitle.ai"
-        };
         let subtitle = FormattedTextElement::from_str(
             localization::text_for_app(app, subtitle_key),
             appearance.ui_font_family(),
@@ -623,15 +668,17 @@ impl LoginSlideView {
         );
 
         let cmd_enter = Keystroke::parse("cmdorctrl-enter").unwrap_or_default();
-        let skip_label = if matches!(self.intention, OnboardingIntention::Terminal) {
-            localization::text_for_app(app, "auth.disable_warp_drive")
-        } else {
-            localization::text_for_app(app, "auth.disable_ai_features")
+        let skip_label_key = match self.login_purpose() {
+            LoginPurpose::WarpDrive => "auth.disable_warp_drive",
+            LoginPurpose::WarpAgent => "auth.disable_ai_features",
+            LoginPurpose::ThirdParty => "auth.skip_for_now",
         };
         let skip_button = self.skip_button.render(
             appearance,
             button::Params {
-                content: button::Content::Label(skip_label.into()),
+                content: button::Content::Label(
+                    localization::text_for_app(app, skip_label_key).into(),
+                ),
                 theme: &button::themes::Naked,
                 options: button::Options {
                     keystroke: Some(cmd_enter),
@@ -935,22 +982,34 @@ impl LoginSlideView {
     // ------------------------------------------------------------------
 
     fn render_skip_dialog(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
-        let theme = appearance.theme();
-        let dialog_surface = theme.surface_1();
-        let dialog_surface_solid = dialog_surface.into_solid();
-        let border_color = internal_colors::neutral_4(theme);
-
-        let is_terminal = matches!(self.intention, OnboardingIntention::Terminal);
-        let title_text = if is_terminal {
-            localization::text_for_app(app, "auth.disable_confirm.title.drive")
-        } else {
-            localization::text_for_app(app, "auth.disable_confirm.title.ai")
+        let (title_key, body_key, features, cancel_label_key): (
+            &'static str,
+            &'static str,
+            &'static [&'static str],
+            &'static str,
+        ) = match self.login_purpose() {
+            LoginPurpose::WarpDrive => (
+                "auth.disable_confirm.title.drive",
+                "auth.disable_confirm.description.drive",
+                WARP_DRIVE_FEATURES,
+                "auth.enable_warp_drive",
+            ),
+            LoginPurpose::WarpAgent => (
+                "auth.disable_confirm.title.ai",
+                "auth.disable_confirm.description.ai",
+                AI_FEATURES,
+                "auth.enable_ai_features",
+            ),
+            LoginPurpose::ThirdParty => (
+                "auth.skip_confirm.title",
+                "auth.skip_confirm.description",
+                AI_FEATURES,
+                "auth.create_account",
+            ),
         };
-        let title = FormattedTextElement::from_str(title_text, appearance.ui_font_family(), 16.)
-            .with_color(internal_colors::text_main(theme, dialog_surface_solid))
-            .with_weight(Weight::Bold)
-            .with_line_height_ratio(1.25)
-            .finish();
+        let title = localization::text_for_app(app, title_key);
+        let body = localization::text_for_app(app, body_key);
+        let cancel_label = localization::text_for_app(app, cancel_label_key);
 
         // Close button with ESC keyboard-shortcut badge.
         let escape = Keystroke::parse("escape").unwrap_or_default();
@@ -969,85 +1028,14 @@ impl LoginSlideView {
             },
         );
 
-        let title_row = Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(Shrinkable::new(1., title).finish())
-            .with_child(close_button)
-            .finish();
-
-        let body_text_key = if is_terminal {
-            "auth.disable_confirm.description.drive"
-        } else {
-            "auth.disable_confirm.description.ai"
-        };
-        let body_text = FormattedTextElement::from_str(
-            localization::text_for_app(app, body_text_key),
-            appearance.ui_font_family(),
-            14.,
-        )
-        .with_color(internal_colors::text_main(theme, dialog_surface_solid))
-        .with_weight(Weight::Normal)
-        .with_line_height_ratio(1.2)
-        .finish();
-
-        let feature_row_color: ColorU = theme.foreground().into();
-        let feature_x_fill: ThemeFill = ThemeFill::Solid(theme.ansi_fg_red());
-        let mut feature_list =
-            Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        let feature_items: &[&str] = if is_terminal {
-            WARP_DRIVE_FEATURES
-        } else {
-            AI_FEATURES
-        };
-        for &item in feature_items {
-            let icon_el = ConstrainedBox::new(Icon::X.to_warpui_icon(feature_x_fill).finish())
-                .with_width(16.)
-                .with_height(16.)
-                .finish();
-            let text_el = FormattedTextElement::from_str(item, appearance.ui_font_family(), 14.)
-                .with_color(feature_row_color)
-                .with_weight(Weight::Normal)
-                .with_alignment(TextAlignment::Left)
-                .with_line_height_ratio(1.0)
-                .finish();
-            let row = Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(icon_el)
-                .with_child(Container::new(text_el).with_margin_left(4.).finish())
-                .finish();
-            feature_list = feature_list.with_child(
-                Container::new(row)
-                    .with_padding_top(4.)
-                    .with_padding_bottom(4.)
-                    .finish(),
-            );
-        }
-
-        let body_section = Flex::column()
-            .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(body_text)
-            .with_child(
-                Container::new(feature_list.finish())
-                    .with_margin_top(12.)
-                    .finish(),
-            )
-            .finish();
-
-        let cancel_label = if is_terminal {
-            localization::text_for_app(app, "auth.enable_warp_drive")
-        } else {
-            localization::text_for_app(app, "auth.enable_ai_features")
-        };
-        let login_button = self.dialog_login_button.render(
+        let cancel_button = self.dialog_login_button.render(
             appearance,
             button::Params {
                 content: button::Content::Label(cancel_label.into()),
                 theme: &button::themes::Naked,
                 options: button::Options {
                     on_click: Some(Box::new(|ctx, _app, _pos| {
-                        ctx.dispatch_typed_action(LoginSlideAction::DismissDialog);
+                        ctx.dispatch_typed_action(LoginSlideAction::LoginFromSkipDialog);
                     })),
                     ..button::Options::default(appearance)
                 },
@@ -1055,7 +1043,7 @@ impl LoginSlideView {
         );
 
         let dialog_enter = Keystroke::parse("enter").unwrap_or_default();
-        let skip_confirm_button = self.dialog_skip_button.render(
+        let confirm_button = self.dialog_skip_button.render(
             appearance,
             button::Params {
                 content: button::Content::Label(
@@ -1072,51 +1060,17 @@ impl LoginSlideView {
             },
         );
 
-        let footer = Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::End)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(login_button)
-                .with_child(
-                    Container::new(skip_confirm_button)
-                        .with_margin_left(8.)
-                        .finish(),
-                )
-                .finish(),
+        render_feature_optout_dialog(
+            appearance,
+            FeatureOptOutDialog {
+                title,
+                body,
+                features,
+                close_button,
+                cancel_button,
+                confirm_button,
+            },
         )
-        .with_border(Border::top(1.).with_border_color(border_color))
-        .with_horizontal_padding(24.)
-        .with_vertical_padding(12.)
-        .finish();
-
-        let dialog = Flex::column()
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_child(
-                Container::new(title_row)
-                    .with_horizontal_padding(24.)
-                    .with_padding_top(24.)
-                    .with_padding_bottom(12.)
-                    .finish(),
-            )
-            .with_child(
-                Container::new(body_section)
-                    .with_horizontal_padding(24.)
-                    .with_padding_bottom(16.)
-                    .finish(),
-            )
-            .with_child(footer)
-            .finish();
-
-        ConstrainedBox::new(
-            Container::new(dialog)
-                .with_background(dialog_surface)
-                .with_border(Border::all(1.).with_border_color(border_color))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
-                .finish(),
-        )
-        .with_width(460.)
-        .finish()
     }
 }
 
@@ -1183,6 +1137,13 @@ impl View for LoginSlideView {
         // Skip dialog overlay
         if matches!(self.active_overlay, Some(LoginSlideOverlay::SkipDialog)) {
             let dialog = self.render_skip_dialog(appearance, app);
+            stack.add_child(
+                warpui::elements::Rect::new()
+                    .with_background(
+                        warp_core::ui::theme::Fill::Solid(ColorU::black()).with_opacity(60),
+                    )
+                    .finish(),
+            );
             let centered = Align::new(dialog).finish();
             stack.add_child(
                 Dismiss::new(centered)
@@ -1230,19 +1191,7 @@ impl TypedActionView for LoginSlideView {
                     return;
                 }
                 // Otherwise Enter is log in
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::LoginButtonClicked {
-                        source: LoginEventSource::OnboardingSlide,
-                    },
-                    ctx
-                );
-                self.last_login_failure_reason = None;
-                self.step = LoginStep::BrowserOpen;
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let sign_up_url = auth_manager.sign_up_url();
-                    ctx.open_url(&sign_up_url);
-                });
-                ctx.notify();
+                self.start_login(ctx);
             }
             LoginSlideAction::ShowSkipDialog => {
                 send_telemetry_from_ctx!(
@@ -1257,6 +1206,10 @@ impl TypedActionView for LoginSlideView {
             LoginSlideAction::ConfirmSkip => {
                 self.active_overlay = None;
                 self.handle_login_later(ctx);
+            }
+            LoginSlideAction::LoginFromSkipDialog => {
+                self.active_overlay = None;
+                self.start_login(ctx);
             }
             LoginSlideAction::DismissDialog => {
                 self.active_overlay = None;

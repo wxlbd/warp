@@ -233,7 +233,7 @@ pub(crate) struct LocalizationUpdater;
 
 impl LocalizationUpdater {
     fn new(ctx: &mut ModelContext<Self>) -> Self {
-        ctx.subscribe_to_model(&LanguageSettings::handle(ctx), |_, event, ctx| {
+        ctx.subscribe_to_model(&LanguageSettings::handle(ctx), |_, _, event, ctx| {
             let LanguageSettingsChangedEvent::AppLanguageSetting { .. } = event;
             let _ = refresh_system_locale_candidates_if_needed(ctx);
             notify_locale_changed_from_model(ctx);
